@@ -1,7 +1,38 @@
+mod menu;
+
 use bevy::prelude::*;
+
+use bevy::window::PresentMode;
 
 fn main() {
     App::new()
-        .add_plugins(DefaultPlugins)
+        .insert_resource(ClearColor(Color::BLACK))
+        .add_plugins(DefaultPlugins
+            .set(WindowPlugin {
+                primary_window: Some(Window {
+                    present_mode: PresentMode::AutoVsync,
+                    prevent_default_event_handling: true,
+                    resizable: false,
+                    resolution: (1270., 720.).into(),
+                    title: "Santorini".to_string(),
+                    ..default()
+                }),
+                ..default()
+            })
+        )
+        .add_state::<AppState>()
+        .add_systems(Startup, setup)
+        .add_plugins(menu::MenuPlugin)
         .run();
+}
+
+#[derive(Clone, Debug, Default, Eq, Hash, PartialEq, States)]
+pub enum AppState {
+    #[default]
+    Menu,
+    Multiplayer,
+}
+
+fn setup(mut commands: Commands) {
+    commands.spawn(Camera2dBundle::default());
 }
