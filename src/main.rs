@@ -1,3 +1,4 @@
+mod board;
 mod menu;
 
 use bevy::prelude::*;
@@ -22,17 +23,22 @@ fn main() {
         )
         .add_state::<AppState>()
         .add_systems(Startup, setup)
-        .add_plugins(menu::MenuPlugin)
+        .add_plugins((board::BoardPlugin, menu::MenuPlugin))
         .run();
 }
 
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq, States)]
 pub enum AppState {
+    InGame,
     #[default]
     Menu,
-    Multiplayer,
 }
 
+// Camera
+
+#[derive(Component)]
+pub struct CameraMarker;
+
 fn setup(mut commands: Commands) {
-    commands.spawn(Camera2dBundle::default());
+    commands.spawn((Camera3dBundle::default(), CameraMarker));
 }

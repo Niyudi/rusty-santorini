@@ -23,11 +23,11 @@ const NORMAL_BUTTON_COLOR: Color = Color::rgb(0.05, 0.05, 0.25);
 
 #[derive(Component)]
 enum MenuButton {
-    Multiplayer,
+    Play,
     Quit,
 }
 #[derive(Component)]
-struct OnMainMenu;
+struct MainMenuMarker;
 
 // Systems
 
@@ -43,7 +43,7 @@ fn buttons_system(
         *color = match *interaction {
             Interaction::Pressed => {
                 match *button {
-                    MenuButton::Multiplayer => next_state.set(AppState::Multiplayer),
+                    MenuButton::Play => next_state.set(AppState::InGame),
                     MenuButton::Quit => exit.send(AppExit),
                 }
                 continue;
@@ -55,7 +55,7 @@ fn buttons_system(
 }
 fn despawn_menu(
     mut commands: Commands,
-    menu_query: Query<Entity, With<OnMainMenu>>,
+    menu_query: Query<Entity, With<MainMenuMarker>>,
 ) {
     let entity = menu_query.single();
     commands.entity(entity).despawn_recursive();
@@ -96,7 +96,7 @@ fn spawn_menu(
                 },
                 ..default()
             },
-            OnMainMenu,
+            MainMenuMarker,
         ))
         .with_children(|parent| {
             parent
@@ -129,11 +129,12 @@ fn spawn_menu(
                                 background_color: NORMAL_BUTTON_COLOR.into(),
                                 ..default()
                             },
-                            MenuButton::Multiplayer,
+                            MenuButton::Play
+                    ,
                         ))
                         .with_children(|parent| {
                             parent.spawn(TextBundle::from_section(
-                                "Multiplayer",
+                                "Play",
                                 button_text_style.clone(),
                             ));
                         });
