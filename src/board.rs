@@ -29,20 +29,20 @@ fn despawn_board(
 fn spawn_board(
     mut camera_query: Query<&mut Transform, With<CameraMarker>>,
     mut commands: Commands,
-    // mut materials: ResMut<Assets<StandardMaterial>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
     let mut camera_transform = camera_query.single_mut();
     *camera_transform = Transform::from_xyz(3.5, 5.0, 0.0).looking_at(Vec3::ZERO, Vec3::Y);
 
-    // let white_material = materials.add(Color::rgb(0.95, 0.95, 1.00).into());
+    let white_material = materials.add(Color::rgb(0.95, 0.95, 1.00).into());
 
-    let base_mesh = meshes.add(
-        shape::Box::from_corners(
-            Vec3::new(-3.0, -0.2, -3.0), Vec3::new(3.0, 0.0, 3.0)).into());
+    let base_mesh = meshes.add(shape::Box::from_corners(
+        Vec3::new(-3.0, -0.2, -3.0), Vec3::new(3.0, 0.0, 3.0)).into());
 
     commands.spawn(PbrBundle {
         mesh: base_mesh,
+        material: white_material.clone(),
         ..default()
     });
 

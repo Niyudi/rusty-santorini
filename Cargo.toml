@@ -43,7 +43,7 @@ features = [
   # Platform-specific:
   "x11",                   # Linux: Support X11 windowing system
   #"android_shared_stdcxx", # Android: use shared C++ library
-  "webgl2",                # Web: use WebGL2 instead of WebGPU
+  #"webgl2",                # Web: use WebGL2 instead of WebGPU
 
   # These are other (non-default) features that may be of interest:
   # (add any of these that you need)
