@@ -22,6 +22,9 @@ const NORMAL_BUTTON_COLOR: Color = Color::rgb(0.05, 0.05, 0.25);
 // Components
 
 #[derive(Component)]
+pub struct MenuCamera;
+
+#[derive(Component)]
 enum MenuButton {
     Play,
     Quit,
@@ -53,16 +56,21 @@ fn buttons_system(
         };
     }
 }
+
 fn despawn_menu(
     mut commands: Commands,
     menu_query: Query<Entity, With<MainMenuMarker>>,
 ) {
-    let entity = menu_query.single();
-    commands.entity(entity).despawn_recursive();
+    for entity in menu_query.iter() {
+        commands.entity(entity).despawn_recursive();
+    }
 }
+
 fn spawn_menu(
     mut commands: Commands,
 ) {
+    commands.spawn((MenuCamera, MainMenuMarker, Camera2dBundle::default()));
+
     const BASE_COLOR: Color = Color::rgb(0.97, 0.97, 1.00);
 
     let button_style = Style {

@@ -13,12 +13,12 @@ fn main() {
     App::new()
         .insert_resource(ClearColor(Color::BLACK))
         .add_plugins(DefaultPlugins
-            .set(RenderPlugin {
-                render_creation: RenderCreation::Automatic(WgpuSettings {
-                    backends: Some(Backends::VULKAN),
-                    ..default()
-                })
-            })
+            // .set(RenderPlugin {
+            //     render_creation: RenderCreation::Automatic(WgpuSettings {
+            //         backends: Some(Backends::VULKAN),
+            //         ..default()
+            //     })
+            // })
             .set(WindowPlugin {
                 primary_window: Some(Window {
                     present_mode: PresentMode::AutoVsync,
@@ -32,7 +32,6 @@ fn main() {
             })
         )
         .add_state::<AppState>()
-        .add_systems(Startup, setup)
         .add_plugins((board::BoardPlugin, menu::MenuPlugin))
         .run();
 }
@@ -42,13 +41,4 @@ pub enum AppState {
     InGame,
     #[default]
     Menu,
-}
-
-// Camera
-
-#[derive(Component)]
-pub struct CameraMarker;
-
-fn setup(mut commands: Commands) {
-    commands.spawn((Camera3dBundle::default(), CameraMarker));
 }

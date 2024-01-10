@@ -5,14 +5,15 @@ use bevy::{
     window::PrimaryWindow,
 };
 use itertools::Itertools;
-use crate::{AppState, CameraMarker};
+use crate::AppState;
 
 pub struct BoardPlugin;
 impl Plugin for BoardPlugin {
     fn build(&self, app: &mut App) {
         app
             .add_systems(OnEnter(AppState::InGame), spawn_board)
-            .add_systems(Update, orbit_mouse.run_if(in_state(AppState::InGame)))
+            .add_systems(Update, (camera_input, update_camera)
+                .chain().run_if(in_state(AppState::InGame)))
             .add_systems(OnExit(AppState::InGame), despawn_board);
     }
 }
@@ -20,9 +21,50 @@ impl Plugin for BoardPlugin {
 // Components
 
 #[derive(Component)]
+struct BoardCamera {
+    pitch: f32,
+    yaw: f32,
+}
+impl Default for BoardCamera {
+    fn default() -> Self {
+        Self { pitch: std::f32::consts::FRAC_PI_4, yaw: 0.0 }
+    }
+}
+
+#[derive(Component)]
 struct BoardMarker;
 
 // Systems
+
+fn camera_input(
+    mut camera_query: Query<&mut BoardCamera>,
+    mut mouse_evr: EventReader<MouseMotion>,
+    mouse: Res<Input<MouseButton>>,
+    window_query: Query<&Window>,
+) {
+    const SENSITIVITY: Vec2 = Vec2::new(60.0, 30.0);
+
+    if !mouse.pressed(MouseButton::Right) {
+        return;
+    }
+
+    let window = window_query.single();
+
+    let mut rotation = Vec2::ZERO;
+    for ev in mouse_evr.read() {
+        rotation = ev.delta * SENSITIVITY / Vec2::new(window.width(), window.height());
+    }
+
+    let mut camera = camera_query.single_mut();
+    camera.pitch = (camera.pitch + rotation.y).clamp(0.0, std::f32::consts::FRAC_PI_2);
+    camera.yaw = camera.yaw + rotation.x;
+    while camera.yaw < 0.0 {
+        camera.yaw += std::f32::consts::TAU;
+    }
+    while camera.yaw > std::f32::consts::TAU {
+        camera.yaw -= std::f32::consts::TAU;
+    }
+}
 
 fn despawn_board(
     mut commands: Commands,
@@ -33,44 +75,12 @@ fn despawn_board(
     }
 }
 
-pub fn orbit_mouse(
-    mut camera_query: Query<&mut Transform, With<CameraMarker>>,
-    mut mouse_evr: EventReader<MouseMotion>,
-    mouse: Res<Input<MouseButton>>,
-    window_query: Query<&Window, With<PrimaryWindow>>,
-) {
-    if !mouse.pressed(MouseButton::Right) {
-        return;
-    }
-
-    let mut rotation = 0.0;
-    for ev in mouse_evr.read() {
-        rotation = ev.delta.x * 10.0;
-    }
-
-    let mut camera_transform = camera_query.single_mut();
-
-    if rotation > 0.0 {
-        let window = window_query.single();
-        let delta = rotation / window.width() * std::f32::consts::PI;
-
-        let yaw = Quat::from_rotation_y(-delta);
-        camera_transform.rotation = yaw * camera_transform.rotation;
-    }
-
-    let rot_matrix = Mat3::from_quat(camera_transform.rotation);
-    camera_transform.translation = rot_matrix.mul_vec3(Vec3::new(0.0, 0.0, 6.0));
-    camera_transform.translation.y = 4.5;
-}
-
 fn spawn_board(
-    mut camera_query: Query<&mut Transform, With<CameraMarker>>,
     mut commands: Commands,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
-    let mut camera_transform = camera_query.single_mut();
-    *camera_transform = Transform::from_xyz(0.0, 4.5, 6.0).looking_at(Vec3::ZERO, Vec3::Y);
+    commands.spawn((Camera3dBundle::default(), BoardCamera::default(), BoardMarker));
 
     let white_material = materials.add(Color::rgb_u8(250, 254, 255).into());
     
@@ -115,4 +125,19 @@ fn spawn_board(
         },
         BoardMarker,
     ));
+}
+
+fn update_camera(
+    mut camera_query: Query<(&mut Transform, &BoardCamera)>,
+) {
+    const DISTANCE: f32 = 10.0;
+
+    let (mut tranform, camera) = camera_query.single_mut();
+
+    let (pitch_sin, pitch_cos) = camera.pitch.sin_cos();
+    *tranform = Transform::from_xyz(
+            DISTANCE * camera.yaw.cos() * pitch_cos,
+            DISTANCE * pitch_sin,
+            DISTANCE * camera.yaw.sin() * pitch_cos,
+        ).looking_at(Vec3::ZERO, Vec3::Y);
 }
