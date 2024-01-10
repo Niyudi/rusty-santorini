@@ -1,9 +1,6 @@
 use bevy::prelude::*;
 
-use bevy::{
-    input::mouse::MouseMotion,
-    window::PrimaryWindow,
-};
+use bevy::input::mouse::MouseMotion;
 use itertools::Itertools;
 use crate::AppState;
 
