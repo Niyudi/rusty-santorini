@@ -9,6 +9,7 @@ edition = "2021"
 bevy_mod_picking = { version = "0.17.0", default-features = false, features = [
   "backend_raycast",
   "highlight",
+  "selection",
 ]}
 itertools = "0.12.0"
 
@@ -41,8 +42,8 @@ features = [
   # File formats:
   "png",    # PNG image format for simple 2D images
   #"hdr",    # HDR images
-  #"ktx2",   # Preferred format for GPU textures
-  #"zstd",   # ZSTD compression support in KTX2 files
+  "ktx2",   # Preferred format for GPU textures
+  "zstd",   # ZSTD compression support in KTX2 files
   #"vorbis", # Audio: OGG Vorbis
 
   # Platform-specific:
@@ -59,7 +60,7 @@ features = [
   #"subpixel_glyph_atlas", # Subpixel antialiasing for text/fonts
   #"serialize",            # Support for `serde` Serialize/Deserialize
   #"async-io",             # Make bevy use `async-io` instead of `futures-lite`
-  #"pbr_transmission_textures", # Enable Transmission textures in PBR materials
+  "pbr_transmission_textures", # Enable Transmission textures in PBR materials
                                # (may cause issues on old/lowend GPUs)
 
   # File formats:

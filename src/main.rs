@@ -5,10 +5,9 @@ use bevy::prelude::*;
 
 use bevy::window::PresentMode;
 use bevy_mod_picking::{
-    backends::raycast,
-    highlight::{GlobalHighlight, HighlightPlugin, HighlightPluginSettings, PickHighlight},
-    input,
-    picking_core,
+    DefaultPickingPlugins,
+    highlight::GlobalHighlight,
+    selection::SelectionSettings,
 };
 
 fn main() {
@@ -29,22 +28,9 @@ fn main() {
                 }
             )
         )
-        .add_plugins((
-            picking_core::CorePlugin,
-            picking_core::InteractionPlugin,
-            input::InputPlugin,
-            raycast::RaycastBackend,
-        ))
-        .init_resource::<HighlightPluginSettings>()
-        .register_type::<PickHighlight>()
-        .register_type::<HighlightPluginSettings>()
-        .add_plugins(HighlightPlugin::<StandardMaterial> {
-            highlighting_default: |mut assets| GlobalHighlight {
-                hovered: assets.add(Color::rgb(0.35, 0.75, 0.35).into()),
-                pressed: assets.add(Color::rgb(0.35, 0.75, 0.35).into()),
-            },
-        })
+        .add_plugins(DefaultPickingPlugins)
         .add_state::<AppState>()
+        .add_systems(PostStartup, picking_setup)
         .add_plugins((board::BoardPlugin, menu::MenuPlugin))
         .run();
 }
@@ -54,4 +40,26 @@ pub enum AppState {
     InGame,
     #[default]
     Menu,
+}
+
+// Setup
+
+fn picking_setup(
+    mut global_highlight: ResMut<GlobalHighlight<StandardMaterial>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut selection_settings: ResMut<SelectionSettings>,
+) {
+    let highlight_material = materials.add(Color::rgb(0.25, 0.65, 0.25).into());
+    let click_material = materials.add(Color::rgb(0.35, 0.75, 0.35).into());
+
+    *global_highlight = GlobalHighlight {
+        hovered: highlight_material.clone(),
+        pressed: click_material,
+        selected: highlight_material,
+    };
+
+    *selection_settings = SelectionSettings {
+        click_nothing_deselect_all: true,
+        use_multiselect_default_inputs: false,
+    };
 }
