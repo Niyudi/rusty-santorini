@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 
 use bevy::input::mouse::MouseMotion;
+use bevy_mod_picking::PickableBundle;
 use itertools::Itertools;
 use crate::AppState;
 
@@ -49,7 +50,7 @@ fn camera_input(
 
     let mut rotation = Vec2::ZERO;
     for ev in mouse_evr.read() {
-        rotation = ev.delta * SENSITIVITY / Vec2::new(window.width(), window.height());
+        rotation = ev.delta / Vec2::new(window.width(), window.height()) * SENSITIVITY;
     }
 
     let mut camera = camera_query.single_mut();
@@ -105,6 +106,7 @@ fn spawn_board(
                 transform: Transform::from_xyz(i as f32, -0.05, j as f32),
                 ..default()
             },
+            PickableBundle::default(),
             BoardMarker,
         ));
     }
@@ -112,12 +114,12 @@ fn spawn_board(
     commands.spawn((
         PointLightBundle {
             point_light: PointLight {
-                intensity: 8000.0,
+                intensity: 10000.0,
                 range: 100.,
                 shadows_enabled: true,
                 ..default()
             },
-            transform: Transform::from_xyz(0.0, 6.0, 0.0),
+            transform: Transform::from_xyz(6.0, 6.0, 0.0),
             ..default()
         },
         BoardMarker,
