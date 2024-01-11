@@ -9,13 +9,15 @@ pub struct BoardPlugin;
 impl Plugin for BoardPlugin {
     fn build(&self, app: &mut App) {
         app
+            .add_event::<Build>()
             .add_event::<PlaceWorker>()
             .add_systems(OnEnter(AppState::InGame), spawn_board)
             .add_systems(
                 Update, (
                     (camera_input, update_camera).chain(),
+                    build,
                     place_worker,
-                    send_place_worker,
+                    send_events_debug,
                 ).run_if(in_state(AppState::InGame)))
             .add_systems(OnExit(AppState::InGame), despawn_board);
     }
@@ -25,6 +27,7 @@ impl Plugin for BoardPlugin {
 
 #[derive(Resource)]
 struct BoardMaterials {
+    blue_material: Handle<StandardMaterial>,
     white_material: Handle<StandardMaterial>,
     worker1_material: Handle<StandardMaterial>,
     worker2_material: Handle<StandardMaterial>,
@@ -89,6 +92,79 @@ enum WorkerMarker {
 }
 
 // Systems
+
+fn build (
+    mut commands: Commands,
+    mut ev_build: EventReader<Build>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut selected_query: Query<(&BoardPosition, &mut Pickable, &mut PickSelection), With<BoardMarker>>,
+    mut turn: ResMut<Turn>,
+    board_materials: Res<BoardMaterials>,
+) {
+    for _ in ev_build.read() {
+        let position = 'pos: {
+            for (position, mut pickable, mut selection) in selected_query.iter_mut() {
+                if selection.is_selected && position.2 < 4 {
+                    *pickable = Pickable::IGNORE;
+                    selection.is_selected = false;
+                    break 'pos position.above();
+                }
+            }
+            return;
+        };
+
+        let (mesh, material) = match position.2 {
+            1 => (meshes.add(shape::Box {
+                min_x: -0.45,
+                max_x: 0.45,
+                min_y: 0.0,
+                max_y: 1.0,
+                min_z: -0.45,
+                max_z: 0.45,
+            }.into()), board_materials.white_material.clone()),
+            2 => (meshes.add(shape::Box {
+                min_x: -0.35,
+                max_x: 0.35,
+                min_y: 0.0,
+                max_y: 1.0,
+                min_z: -0.35,
+                max_z: 0.35,
+            }.into()), board_materials.white_material.clone()),
+            3 => (meshes.add(shape::Box {
+                min_x: -0.25,
+                max_x: 0.25,
+                min_y: 0.0,
+                max_y: 1.0,
+                min_z: -0.25,
+                max_z: 0.25,
+            }.into()), board_materials.white_material.clone()),
+            _ => (meshes.add(shape::Box {
+                min_x: -0.25,
+                max_x: 0.25,
+                min_y: 0.0,
+                max_y: 0.35,
+                min_z: -0.25,
+                max_z: 0.25,
+            }.into()), board_materials.blue_material.clone()),
+        };
+
+        commands.spawn((
+            PbrBundle {
+                mesh,
+                material,
+                transform: Transform::from_xyz(position.0 as f32 - 2.0, position.2 as f32 - 1.0, position.1 as f32 - 2.0),
+                ..default()
+            },
+            PickableBundle::default(),
+            position,
+            BoardMarker,
+        ));
+
+        turn.next();
+        break;
+    }
+    ev_build.clear();
+}
 
 fn camera_input(
     mut camera_query: Query<&mut BoardCamera>,
@@ -179,12 +255,15 @@ fn place_worker(
     ev_place_worker.clear();
 }
 
-fn send_place_worker(
+fn send_events_debug(
+    mut ev_build: EventWriter<Build>,
     mut ev_place_worker: EventWriter<PlaceWorker>,
     keys: Res<Input<KeyCode>>,
 ) {
     if keys.just_pressed(KeyCode::S) {
-        ev_place_worker.send(PlaceWorker)
+        ev_place_worker.send(PlaceWorker);
+    } else if keys.just_pressed(KeyCode::B) {
+        ev_build.send(Build);
     }
 }
 
@@ -242,6 +321,10 @@ fn spawn_board(
     ));
 
     commands.insert_resource(BoardMaterials {
+        blue_material: materials.add(StandardMaterial {
+            base_color: Color::BLUE,
+            ..default()
+        }),
         white_material,
         worker1_material: materials.add(StandardMaterial {
             base_color: Color::GOLD,
@@ -275,6 +358,11 @@ fn update_camera(
             DISTANCE * camera.yaw.sin() * pitch_cos,
         ).looking_at(Vec3::ZERO, Vec3::Y);
 }
+
+// Events
+
+#[derive(Event)]
+struct Build;
 
 #[derive(Event)]
 struct PlaceWorker;
