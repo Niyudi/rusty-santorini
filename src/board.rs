@@ -10,12 +10,14 @@ impl Plugin for BoardPlugin {
     fn build(&self, app: &mut App) {
         app
             .add_event::<Build>()
+            .add_event::<NextTurn>()
             .add_event::<PlaceWorker>()
             .add_systems(OnEnter(AppState::InGame), spawn_board)
             .add_systems(
                 Update, (
                     (camera_input, update_camera).chain(),
                     build,
+                    next_turn,
                     place_worker,
                     send_events_debug,
                 ).run_if(in_state(AppState::InGame)))
@@ -33,10 +35,10 @@ struct BoardMaterials {
     worker2_material: Handle<StandardMaterial>,
 }
 impl BoardMaterials {
-    fn get_worker_material(&self, worker_marker: &WorkerMarker) -> Handle<StandardMaterial> {
-        match worker_marker {
-            WorkerMarker::P1 => self.worker1_material.clone(),
-            WorkerMarker::P2 => self.worker2_material.clone(),
+    fn get_turn_material(&self, turn: &Turn) -> Handle<StandardMaterial> {
+        match turn {
+            Turn::P1 => self.worker1_material.clone(),
+            Turn::P2 => self.worker2_material.clone(),
         }
     }
 }
@@ -75,6 +77,9 @@ impl Default for BoardCamera {
 }
 
 #[derive(Component)]
+struct BaseMarker;
+
+#[derive(Component)]
 struct BoardMarker;
 
 #[derive(Component)]
@@ -84,6 +89,9 @@ impl BoardPosition {
         BoardPosition(self.0, self.1, self.2 + 1)
     }
 }
+
+#[derive(Component)]
+struct TurnIndicatorMarker;
 
 #[derive(Component)]
 enum WorkerMarker {
@@ -98,7 +106,6 @@ fn build (
     mut ev_build: EventReader<Build>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut selected_query: Query<(&BoardPosition, &mut Pickable, &mut PickSelection), With<BoardMarker>>,
-    mut turn: ResMut<Turn>,
     board_materials: Res<BoardMaterials>,
 ) {
     for _ in ev_build.read() {
@@ -160,7 +167,6 @@ fn build (
             BoardMarker,
         ));
 
-        turn.next();
         break;
     }
     ev_build.clear();
@@ -198,9 +204,13 @@ fn camera_input(
 
 fn despawn_board(
     mut commands: Commands,
+    base_query: Query<Entity, With<BaseMarker>>,
     board_query: Query<Entity, With<BoardMarker>>,
     workers_query: Query<Entity, With<WorkerMarker>>,
 ) {
+    for entity in base_query.iter() {
+        commands.entity(entity).despawn_recursive();
+    }
     for entity in board_query.iter() {
         commands.entity(entity).despawn_recursive();
     }
@@ -212,12 +222,30 @@ fn despawn_board(
     commands.remove_resource::<Turn>();
 }
 
+fn next_turn(
+    mut commands: Commands,
+    mut ev_next_turn: EventReader<NextTurn>,
+    mut turn: ResMut<Turn>,
+    board_materials: Res<BoardMaterials>,
+    turn_indicator_query: Query<Entity, With<TurnIndicatorMarker>>,
+) {
+    for _ in ev_next_turn.read() {
+        turn.next();
+
+        let turn_indicator_entity = turn_indicator_query.single();
+        commands.entity(turn_indicator_entity).insert(board_materials.get_turn_material(&turn));
+
+        break;
+    }
+    ev_next_turn.clear();
+}
+
 fn place_worker(
     mut commands: Commands,
     mut ev_place_worker: EventReader<PlaceWorker>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut selected_query: Query<(&BoardPosition, &mut Pickable, &mut PickSelection), With<BoardMarker>>,
-    mut turn: ResMut<Turn>,
+    turn: Res<Turn>,
     board_materials: Res<BoardMaterials>,
 ) {
     for _ in ev_place_worker.read() {
@@ -240,7 +268,7 @@ fn place_worker(
                     depth: 0.4,
                     ..default()
                 }.into()),
-                material: board_materials.get_worker_material(&worker_marker),
+                material: board_materials.get_turn_material(&turn),
                 transform: Transform::from_xyz(position.0 as f32 - 2.0, position.2 as f32 - 0.6, position.1 as f32 - 2.0),
                 ..default()
             },
@@ -249,7 +277,6 @@ fn place_worker(
             worker_marker,
         ));
 
-        turn.next();
         break;
     }
     ev_place_worker.clear();
@@ -257,6 +284,7 @@ fn place_worker(
 
 fn send_events_debug(
     mut ev_build: EventWriter<Build>,
+    mut ev_next_turn: EventWriter<NextTurn>,
     mut ev_place_worker: EventWriter<PlaceWorker>,
     keys: Res<Input<KeyCode>>,
 ) {
@@ -264,6 +292,8 @@ fn send_events_debug(
         ev_place_worker.send(PlaceWorker);
     } else if keys.just_pressed(KeyCode::B) {
         ev_build.send(Build);
+    } else if keys.just_pressed(KeyCode::N) {
+        ev_next_turn.send(NextTurn);
     }
 }
 
@@ -275,6 +305,13 @@ fn spawn_board(
     commands.spawn((Camera3dBundle::default(), BoardCamera::default(), BoardMarker));
 
     let white_material = materials.add(Color::rgb_u8(250, 254, 255).into());
+    let worker1_material = materials.add(StandardMaterial {
+        base_color: Color::GOLD,
+        metallic: 1.0,
+        reflectance: 0.8,
+        perceptual_roughness: 0.4,
+        ..default()
+    });
     
     commands.spawn((
         PbrBundle {
@@ -283,7 +320,17 @@ fn spawn_board(
             material: white_material.clone(),
             ..default()
         },
-        BoardMarker,
+        BaseMarker,
+    ));
+    commands.spawn((
+        PbrBundle {
+            mesh: meshes.add(shape::Box::from_corners(
+                Vec3::new(-2.9, -0.21, -2.9), Vec3::new(2.9, -0.49, 2.9)).into()),
+            material: worker1_material.clone(),
+            ..default()
+        },
+        TurnIndicatorMarker,
+        BaseMarker,
     ));
 
     let light_square_material = 
@@ -326,13 +373,7 @@ fn spawn_board(
             ..default()
         }),
         white_material,
-        worker1_material: materials.add(StandardMaterial {
-            base_color: Color::GOLD,
-            metallic: 1.0,
-            reflectance: 0.8,
-            perceptual_roughness: 0.4,
-            ..default()
-        }),
+        worker1_material,
         worker2_material: materials.add(StandardMaterial {
             base_color: Color::SILVER,
             metallic: 1.0,
@@ -363,6 +404,9 @@ fn update_camera(
 
 #[derive(Event)]
 struct Build;
+
+#[derive(Event)]
+struct NextTurn;
 
 #[derive(Event)]
 struct PlaceWorker;
