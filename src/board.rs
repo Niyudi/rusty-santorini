@@ -18,14 +18,19 @@ impl Plugin for BoardPlugin {
             .add_systems(OnEnter(AppState::InGame), spawn_board)
             .add_systems(
                 Update, (
-                    (camera_input, update_camera).chain(),
-                    build,
-                    hold,
-                    movement,
-                    next_turn,
-                    place_worker,
-                    release,
+                    (
+                        camera_input,
+                        update_camera,
+                    ).chain(),
                     send_events_debug,
+                    (
+                        build,
+                        hold,
+                        movement,
+                        next_turn,
+                        place_worker,
+                        release,
+                    ).after(send_events_debug),
                 ).run_if(in_state(AppState::InGame)))
             .add_systems(OnExit(AppState::InGame), despawn_board);
     }
@@ -34,22 +39,56 @@ impl Plugin for BoardPlugin {
 // Resources
 
 #[derive(Resource)]
-struct BoardMaterials {
+struct BoardAssets {
     blue_material: Handle<StandardMaterial>,
+    level1_height: f32,
+    level1_mesh: Handle<Mesh>,
+    level2_height: f32,
+    level2_mesh: Handle<Mesh>,
+    level3_height: f32,
+    level3_mesh: Handle<Mesh>,
+    level4_height: f32,
+    level4_mesh: Handle<Mesh>,
     white_material: Handle<StandardMaterial>,
     worker1_material: Handle<StandardMaterial>,
     worker2_material: Handle<StandardMaterial>,
+    worker_height_offset: f32,
+    worker_mesh: Handle<Mesh>,
 }
-impl BoardMaterials {
+impl BoardAssets {
+    fn get_block_at_height(&self, height: usize) -> (f32, Handle<Mesh>, Handle<StandardMaterial>) {
+        match height {
+            1 => (self.level1_height, self.level1_mesh.clone(), self.white_material.clone()),
+            2 => (self.level2_height, self.level2_mesh.clone(), self.white_material.clone()),
+            3 => (self.level3_height, self.level3_mesh.clone(), self.white_material.clone()),
+            4 => (self.level4_height, self.level4_mesh.clone(), self.blue_material.clone()),
+            _ => unreachable!(),
+        }
+    }
     fn get_turn_material(&self, turn: &Turn) -> Handle<StandardMaterial> {
         match turn {
             Turn::P1 => self.worker1_material.clone(),
             Turn::P2 => self.worker2_material.clone(),
         }
     }
+    fn get_worker_at_height_and_turn(&self, height: usize, turn: &Turn) -> (f32, Handle<Mesh>, Handle<StandardMaterial>) {
+        let material = self.get_turn_material(turn);
+
+        (
+            self.worker_height_offset + match height {
+                1 => self.level1_height,
+                2 => self.level2_height,
+                3 => self.level3_height,
+                4 => self.level4_height,
+                _ => unreachable!(),
+            },
+            self.worker_mesh.clone(),
+            material,
+        )
+    }
 }
 
-#[derive(Resource)]
+#[derive(  Resource)]
 enum Turn {
     P1,
     P2,
@@ -88,7 +127,7 @@ struct BaseMarker;
 #[derive(Component)]
 struct BoardMarker;
 
-#[derive(Component)]
+#[derive(Component, PartialEq)]
 struct BoardPosition(usize, usize, usize);
 impl BoardPosition {
     fn above(&self) -> BoardPosition {
@@ -113,9 +152,8 @@ enum WorkerMarker {
 fn build (
     mut commands: Commands,
     mut ev_build: EventReader<Build>,
-    mut meshes: ResMut<Assets<Mesh>>,
     mut selected_query: Query<(&BoardPosition, &mut Pickable, &mut PickSelection), With<BoardMarker>>,
-    board_materials: Res<BoardMaterials>,
+    board_assets: Res<BoardAssets>,
 ) {
     'events: for _ in ev_build.read() {
         let position = 'pos: {
@@ -129,46 +167,13 @@ fn build (
             break 'events;
         };
 
-        let (mesh, material) = match position.2 {
-            1 => (meshes.add(shape::Box {
-                min_x: -0.45,
-                max_x: 0.45,
-                min_y: 0.0,
-                max_y: 1.0,
-                min_z: -0.45,
-                max_z: 0.45,
-            }.into()), board_materials.white_material.clone()),
-            2 => (meshes.add(shape::Box {
-                min_x: -0.35,
-                max_x: 0.35,
-                min_y: 0.0,
-                max_y: 1.0,
-                min_z: -0.35,
-                max_z: 0.35,
-            }.into()), board_materials.white_material.clone()),
-            3 => (meshes.add(shape::Box {
-                min_x: -0.25,
-                max_x: 0.25,
-                min_y: 0.0,
-                max_y: 1.0,
-                min_z: -0.25,
-                max_z: 0.25,
-            }.into()), board_materials.white_material.clone()),
-            _ => (meshes.add(shape::Box {
-                min_x: -0.25,
-                max_x: 0.25,
-                min_y: 0.0,
-                max_y: 0.35,
-                min_z: -0.25,
-                max_z: 0.25,
-            }.into()), board_materials.blue_material.clone()),
-        };
+        let (height, mesh, material) = board_assets.get_block_at_height(position.2);
 
         commands.spawn((
             PbrBundle {
                 mesh,
                 material,
-                transform: Transform::from_xyz(position.0 as f32 - 2.0, position.2 as f32 - 1.0, position.1 as f32 - 2.0),
+                transform: Transform::from_xyz(position.0 as f32 - 2.0, height, position.1 as f32 - 2.0),
                 ..default()
             },
             PickableBundle {
@@ -230,7 +235,8 @@ fn despawn_board(
         commands.entity(entity).despawn_recursive();
     }
     
-    commands.remove_resource::<BoardMaterials>();
+    commands.remove_resource::<AmbientLight>();
+    commands.remove_resource::<BoardAssets>();
     commands.remove_resource::<Turn>();
 }
 
@@ -272,20 +278,30 @@ fn movement(
     mut selected_query: Query<(&BoardPosition, &mut Pickable, &mut PickSelection), (With<BoardMarker>, Without<Held>)>,
 ) {
     'events: for _ in ev_movement.read() {
-        if let Ok((entity, mut transform, mut position, mut pickable)) = held_query.get_single_mut() {
-            *position = 'pos: {
-                for (position, mut pickable, mut selection) in selected_query.iter_mut() {
-                    if selection.is_selected {
-                        *pickable = Pickable::IGNORE;
-                        selection.is_selected = false;
-                        break 'pos position.above();
+        if let Ok((entity, mut transform, mut worker_position, mut pickable)) = held_query.get_single_mut() {
+            *worker_position = 'pos: {
+                let mut origin_board = None;
+                let mut new_worker = None;
+                for (position, pickable, selection) in selected_query.iter_mut() {
+                    if position.above() == *worker_position {
+                        origin_board = Some(pickable);
+                    } else if selection.is_selected {
+                        new_worker = Some((position, pickable, selection));
+                    }
+
+                    if origin_board.is_some() && new_worker.is_some() {
+                        *origin_board.unwrap() = Pickable::default();
+                        let (new_position, mut new_pickable, mut new_selection) = new_worker.unwrap();
+                        *new_pickable = Pickable::IGNORE;
+                        new_selection.is_selected = false;
+                        break 'pos new_position.above();
                     }
                 }
                 break 'events;
             };
             
             commands.entity(entity).remove::<Held>();
-            transform.translation = Vec3::new(position.0 as f32 - 2.0, position.2 as f32 - 0.6, position.1 as f32 - 2.0);
+            transform.translation = Vec3::new(worker_position.0 as f32 - 2.0, worker_position.2 as f32 - 0.6, worker_position.1 as f32 - 2.0);
             *pickable = Pickable::default();
         }
         break;
@@ -297,7 +313,7 @@ fn next_turn(
     mut commands: Commands,
     mut ev_next_turn: EventReader<NextTurn>,
     mut turn: ResMut<Turn>,
-    board_materials: Res<BoardMaterials>,
+    board_assets: Res<BoardAssets>,
     held_query: Query<(), With<Held>>,
     turn_indicator_query: Query<Entity, With<TurnIndicatorMarker>>,
 ) {
@@ -309,7 +325,7 @@ fn next_turn(
         turn.next();
 
         let turn_indicator_entity = turn_indicator_query.single();
-        commands.entity(turn_indicator_entity).insert(board_materials.get_turn_material(&turn));
+        commands.entity(turn_indicator_entity).insert(board_assets.get_turn_material(&turn));
 
         break;
     }
@@ -319,10 +335,9 @@ fn next_turn(
 fn place_worker(
     mut commands: Commands,
     mut ev_place_worker: EventReader<PlaceWorker>,
-    mut meshes: ResMut<Assets<Mesh>>,
     mut selected_query: Query<(&BoardPosition, &mut Pickable, &mut PickSelection), With<BoardMarker>>,
+    board_assets: Res<BoardAssets>,
     turn: Res<Turn>,
-    board_materials: Res<BoardMaterials>,
 ) {
     'events: for _ in ev_place_worker.read() {
         let position = 'pos: {
@@ -336,16 +351,13 @@ fn place_worker(
             break 'events;
         };
         let worker_marker = turn.get_worker_marker();
+        let (height, mesh, material) = board_assets.get_worker_at_height_and_turn(position.2, &turn);
 
         commands.spawn((
             PbrBundle {
-                mesh: meshes.add(shape::Capsule {
-                    radius: 0.2,
-                    depth: 0.4,
-                    ..default()
-                }.into()),
-                material: board_materials.get_turn_material(&turn),
-                transform: Transform::from_xyz(position.0 as f32 - 2.0, position.2 as f32 - 0.6, position.1 as f32 - 2.0),
+                mesh,
+                material,
+                transform: Transform::from_xyz(position.0 as f32 - 2.0, height, position.1 as f32 - 2.0),
                 ..default()
             },
             PickableBundle::default(),
@@ -403,22 +415,96 @@ fn spawn_board(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
-    commands.spawn((Camera3dBundle::default(), BoardCamera::default(), BoardMarker));
+    // Recurring assets
+    let board_assets = BoardAssets {
+        blue_material: materials.add(Color::BLUE.into()),
+        level1_height: 0.0,
+        level1_mesh: meshes.add(shape::Box {
+            min_x: -0.475,
+            max_x: 0.475,
+            min_y: 0.0,
+            max_y: 1.0,
+            min_z: -0.475,
+            max_z: 0.475,
+        }.into()),
+        level2_height: 1.0,
+        level2_mesh: meshes.add(shape::Box {
+            min_x: -0.425,
+            max_x: 0.425,
+            min_y: 0.0,
+            max_y: 0.8,
+            min_z: -0.425,
+            max_z: 0.425,
+        }.into()),
+        level3_height: 1.8,
+        level3_mesh: meshes.add(shape::Box {
+            min_x: -0.4,
+            max_x: 0.4,
+            min_y: 0.0,
+            max_y: 0.6,
+            min_z: -0.4,
+            max_z: 0.4,
+        }.into()),
+        level4_height: 2.4,
+        level4_mesh: meshes.add(shape::Box {
+            min_x: -0.4,
+            max_x: 0.4,
+            min_y: 0.0,
+            max_y: 0.25,
+            min_z: -0.4,
+            max_z: 0.4,
+        }.into()),
+        white_material: materials.add(Color::rgb_u8(250, 254, 255).into()),
+        worker1_material: materials.add(StandardMaterial {
+            base_color: Color::GOLD,
+            metallic: 1.0,
+            reflectance: 0.8,
+            perceptual_roughness: 0.4,
+            ..default()
+        }),
+        worker2_material: materials.add(StandardMaterial {
+            base_color: Color::SILVER,
+            metallic: 1.0,
+            reflectance: 0.8,
+            perceptual_roughness: 0.4,
+            ..default()
+        }),
+        worker_height_offset: 0.4,
+        worker_mesh: meshes.add(shape::Capsule {
+            radius: 0.2,
+            depth: 0.4,
+            ..default()
+        }.into()),
+    };
 
-    let white_material = materials.add(Color::rgb_u8(250, 254, 255).into());
-    let worker1_material = materials.add(StandardMaterial {
-        base_color: Color::GOLD,
-        metallic: 1.0,
-        reflectance: 0.8,
-        perceptual_roughness: 0.4,
-        ..default()
+    // Camera
+    commands.spawn((Camera3dBundle::default(), BoardCamera::default(), BaseMarker));
+
+    // Lights
+    commands.insert_resource(AmbientLight {
+        color: Color::rgb(1.0, 0.8, 0.7),
+        brightness: 0.4,
     });
+    commands.spawn((
+        PointLightBundle {
+            point_light: PointLight {
+                intensity: 10000.0,
+                range: 100.,
+                shadows_enabled: true,
+                ..default()
+            },
+            transform: Transform::from_xyz(6.0, 6.0, 0.0),
+            ..default()
+        },
+        BaseMarker,
+    ));
     
+    // Base
     commands.spawn((
         PbrBundle {
             mesh: meshes.add(shape::Box::from_corners(
                 Vec3::new(-2.7, -0.2, -2.7), Vec3::new(2.7, -0.05, 2.7)).into()),
-            material: white_material.clone(),
+            material: board_assets.white_material.clone(),
             ..default()
         },
         BaseMarker,
@@ -427,13 +513,14 @@ fn spawn_board(
         PbrBundle {
             mesh: meshes.add(shape::Box::from_corners(
                 Vec3::new(-2.9, -0.21, -2.9), Vec3::new(2.9, -0.49, 2.9)).into()),
-            material: worker1_material.clone(),
+            material: board_assets.worker1_material.clone(),
             ..default()
         },
         TurnIndicatorMarker,
         BaseMarker,
     ));
 
+    // Level 0 board
     let light_square_material = 
         materials.add(Color::rgb_u8(117, 205, 255).into());
     let dark_square_material = 
@@ -454,35 +541,8 @@ fn spawn_board(
         ));
     }
 
-    commands.spawn((
-        PointLightBundle {
-            point_light: PointLight {
-                intensity: 10000.0,
-                range: 100.,
-                shadows_enabled: true,
-                ..default()
-            },
-            transform: Transform::from_xyz(6.0, 6.0, 0.0),
-            ..default()
-        },
-        BoardMarker,
-    ));
-
-    commands.insert_resource(BoardMaterials {
-        blue_material: materials.add(StandardMaterial {
-            base_color: Color::BLUE,
-            ..default()
-        }),
-        white_material,
-        worker1_material,
-        worker2_material: materials.add(StandardMaterial {
-            base_color: Color::SILVER,
-            metallic: 1.0,
-            reflectance: 0.8,
-            perceptual_roughness: 0.4,
-            ..default()
-        }),
-    });
+    // Inserts resources
+    commands.insert_resource(board_assets);
     commands.insert_resource(Turn::P1);
 }
 

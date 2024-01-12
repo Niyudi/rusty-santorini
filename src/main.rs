@@ -2,13 +2,10 @@ mod board;
 mod menu;
 
 use bevy::prelude::*;
+use bevy_mod_picking::prelude::*;
 
 use bevy::window::PresentMode;
-use bevy_mod_picking::{
-    DefaultPickingPlugins,
-    highlight::GlobalHighlight,
-    selection::SelectionSettings,
-};
+use bevy_mod_picking::selection::SelectionSettings;
 
 fn main() {
     App::new()
