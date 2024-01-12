@@ -10,15 +10,21 @@ impl Plugin for BoardPlugin {
     fn build(&self, app: &mut App) {
         app
             .add_event::<Build>()
+            .add_event::<Hold>()
+            .add_event::<Movement>()
             .add_event::<NextTurn>()
             .add_event::<PlaceWorker>()
+            .add_event::<Release>()
             .add_systems(OnEnter(AppState::InGame), spawn_board)
             .add_systems(
                 Update, (
                     (camera_input, update_camera).chain(),
                     build,
+                    hold,
+                    movement,
                     next_turn,
                     place_worker,
+                    release,
                     send_events_debug,
                 ).run_if(in_state(AppState::InGame)))
             .add_systems(OnExit(AppState::InGame), despawn_board);
@@ -91,9 +97,12 @@ impl BoardPosition {
 }
 
 #[derive(Component)]
-struct TurnIndicatorMarker;
+struct Held;
 
 #[derive(Component)]
+struct TurnIndicatorMarker;
+
+#[derive(Component, PartialEq)]
 enum WorkerMarker {
     P1,
     P2,
@@ -108,16 +117,16 @@ fn build (
     mut selected_query: Query<(&BoardPosition, &mut Pickable, &mut PickSelection), With<BoardMarker>>,
     board_materials: Res<BoardMaterials>,
 ) {
-    for _ in ev_build.read() {
+    'events: for _ in ev_build.read() {
         let position = 'pos: {
             for (position, mut pickable, mut selection) in selected_query.iter_mut() {
-                if selection.is_selected && position.2 < 4 {
+                if selection.is_selected {
                     *pickable = Pickable::IGNORE;
                     selection.is_selected = false;
                     break 'pos position.above();
                 }
             }
-            return;
+            break 'events;
         };
 
         let (mesh, material) = match position.2 {
@@ -162,7 +171,10 @@ fn build (
                 transform: Transform::from_xyz(position.0 as f32 - 2.0, position.2 as f32 - 1.0, position.1 as f32 - 2.0),
                 ..default()
             },
-            PickableBundle::default(),
+            PickableBundle {
+                pickable: if position.2 == 4 { Pickable::IGNORE } else { Pickable::default() },
+                ..default()
+            },
             position,
             BoardMarker,
         ));
@@ -222,14 +234,78 @@ fn despawn_board(
     commands.remove_resource::<Turn>();
 }
 
+fn hold(
+    mut commands: Commands,
+    mut ev_hold: EventReader<Hold>,
+    mut selected_query: Query<(Entity, &WorkerMarker, &mut Transform, &mut Pickable, &mut PickSelection), Without<Held>>,
+    held_query: Query<(), With<Held>>,
+    turn: Res<Turn>,
+) {
+    'events: for  _ in ev_hold.read() {
+        if !held_query.is_empty() {
+            break;
+        }
+
+        let (entity, mut transform) = 'transform: {
+            for (entity, worker_marker, transform, mut pickable, mut selection) in selected_query.iter_mut() {
+                if selection.is_selected && turn.get_worker_marker() == *worker_marker {
+                    *pickable = Pickable::IGNORE;
+                    selection.is_selected = false;
+                    break 'transform (entity, transform);
+                }
+            }
+            break 'events;
+        };
+
+        commands.entity(entity).insert(Held);
+        transform.translation.y += 0.75;
+
+        break;
+    }
+    ev_hold.clear();
+}
+
+fn movement(
+    mut commands: Commands,
+    mut ev_movement: EventReader<Movement>,
+    mut held_query: Query<(Entity, &mut Transform, &mut BoardPosition, &mut Pickable), (Without<BoardMarker>, With<Held>)>,
+    mut selected_query: Query<(&BoardPosition, &mut Pickable, &mut PickSelection), (With<BoardMarker>, Without<Held>)>,
+) {
+    'events: for _ in ev_movement.read() {
+        if let Ok((entity, mut transform, mut position, mut pickable)) = held_query.get_single_mut() {
+            *position = 'pos: {
+                for (position, mut pickable, mut selection) in selected_query.iter_mut() {
+                    if selection.is_selected {
+                        *pickable = Pickable::IGNORE;
+                        selection.is_selected = false;
+                        break 'pos position.above();
+                    }
+                }
+                break 'events;
+            };
+            
+            commands.entity(entity).remove::<Held>();
+            transform.translation = Vec3::new(position.0 as f32 - 2.0, position.2 as f32 - 0.6, position.1 as f32 - 2.0);
+            *pickable = Pickable::default();
+        }
+        break;
+    }
+    ev_movement.clear();
+}
+
 fn next_turn(
     mut commands: Commands,
     mut ev_next_turn: EventReader<NextTurn>,
     mut turn: ResMut<Turn>,
     board_materials: Res<BoardMaterials>,
+    held_query: Query<(), With<Held>>,
     turn_indicator_query: Query<Entity, With<TurnIndicatorMarker>>,
 ) {
     for _ in ev_next_turn.read() {
+        if !held_query.is_empty() {
+            break;
+        }
+
         turn.next();
 
         let turn_indicator_entity = turn_indicator_query.single();
@@ -248,16 +324,16 @@ fn place_worker(
     turn: Res<Turn>,
     board_materials: Res<BoardMaterials>,
 ) {
-    for _ in ev_place_worker.read() {
+    'events: for _ in ev_place_worker.read() {
         let position = 'pos: {
             for (position, mut pickable, mut selection) in selected_query.iter_mut() {
-                if selection.is_selected && position.2 < 4 {
+                if selection.is_selected {
                     *pickable = Pickable::IGNORE;
                     selection.is_selected = false;
                     break 'pos position.above();
                 }
             }
-            return;
+            break 'events;
         };
         let worker_marker = turn.get_worker_marker();
 
@@ -282,10 +358,29 @@ fn place_worker(
     ev_place_worker.clear();
 }
 
+fn release(
+    mut commands: Commands,
+    mut ev_release: EventReader<Release>,
+    mut held_query: Query<(Entity, &mut Transform, &mut Pickable), With<Held>>,
+) {
+    for _ in ev_release.read() {
+        if let Ok((entity, mut transform, mut pickable)) = held_query.get_single_mut() {
+            commands.entity(entity).remove::<Held>();
+            transform.translation.y -= 0.75;
+            *pickable = Pickable::default();
+        }
+        break;
+    }
+    ev_release.clear();
+}
+
 fn send_events_debug(
     mut ev_build: EventWriter<Build>,
+    mut ev_hold: EventWriter<Hold>,
+    mut ev_movement: EventWriter<Movement>,
     mut ev_next_turn: EventWriter<NextTurn>,
     mut ev_place_worker: EventWriter<PlaceWorker>,
+    mut ev_release: EventWriter<Release>,
     keys: Res<Input<KeyCode>>,
 ) {
     if keys.just_pressed(KeyCode::S) {
@@ -294,6 +389,12 @@ fn send_events_debug(
         ev_build.send(Build);
     } else if keys.just_pressed(KeyCode::N) {
         ev_next_turn.send(NextTurn);
+    } else if keys.just_pressed(KeyCode::H) {
+        ev_hold.send(Hold);
+    } else if keys.just_pressed(KeyCode::M) {
+        ev_movement.send(Movement);
+    } else if keys.just_pressed(KeyCode::R) {
+        ev_release.send(Release);
     }
 }
 
@@ -406,7 +507,16 @@ fn update_camera(
 struct Build;
 
 #[derive(Event)]
+struct Hold;
+
+#[derive(Event)]
+struct Movement;
+
+#[derive(Event)]
 struct NextTurn;
 
 #[derive(Event)]
 struct PlaceWorker;
+
+#[derive(Event)]
+struct Release;
