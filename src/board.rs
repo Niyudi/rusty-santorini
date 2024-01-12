@@ -75,16 +75,19 @@ impl BoardAssets {
         let material = self.get_turn_material(turn);
 
         (
-            self.worker_height_offset + match height {
-                1 => self.level1_height,
-                2 => self.level2_height,
-                3 => self.level3_height,
-                4 => self.level4_height,
-                _ => unreachable!(),
-            },
+            self.get_worker_height(height),
             self.worker_mesh.clone(),
             material,
         )
+    }
+    fn get_worker_height(&self, height: usize) -> f32 {
+        self.worker_height_offset + match height {
+            1 => self.level1_height,
+            2 => self.level2_height,
+            3 => self.level3_height,
+            4 => self.level4_height,
+            _ => unreachable!(),
+        }
     }
 }
 
@@ -276,6 +279,7 @@ fn movement(
     mut ev_movement: EventReader<Movement>,
     mut held_query: Query<(Entity, &mut Transform, &mut BoardPosition, &mut Pickable), (Without<BoardMarker>, With<Held>)>,
     mut selected_query: Query<(&BoardPosition, &mut Pickable, &mut PickSelection), (With<BoardMarker>, Without<Held>)>,
+    board_assets: Res<BoardAssets>,
 ) {
     'events: for _ in ev_movement.read() {
         if let Ok((entity, mut transform, mut worker_position, mut pickable)) = held_query.get_single_mut() {
@@ -301,7 +305,7 @@ fn movement(
             };
             
             commands.entity(entity).remove::<Held>();
-            transform.translation = Vec3::new(worker_position.0 as f32 - 2.0, worker_position.2 as f32 - 0.6, worker_position.1 as f32 - 2.0);
+            transform.translation = Vec3::new(worker_position.0 as f32 - 2.0, board_assets.get_worker_height(worker_position.2), worker_position.1 as f32 - 2.0);
             *pickable = Pickable::default();
         }
         break;
