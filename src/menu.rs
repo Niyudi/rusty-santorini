@@ -2,7 +2,11 @@ use bevy::prelude::*;
 
 use bevy::app::AppExit;
 
-use crate::AppState;
+use crate::{
+    AppState,
+    board::Controllers,
+    controller::Controller,
+};
 
 pub struct MenuPlugin;
 impl Plugin for MenuPlugin {
@@ -35,6 +39,7 @@ struct MainMenuMarker;
 // Systems
 
 fn buttons_system(
+    mut commands: Commands,
     mut exit: EventWriter<AppExit>,
     mut interaction_query: Query<
         (&Interaction, &MenuButton, &mut BackgroundColor),
@@ -46,7 +51,13 @@ fn buttons_system(
         *color = match *interaction {
             Interaction::Pressed => {
                 match *button {
-                    MenuButton::Play => next_state.set(AppState::InGame),
+                    MenuButton::Play => {
+                        commands.insert_resource(Controllers {
+                            p1: Controller::Human,
+                            p2: Controller::Human,
+                        });
+                        next_state.set(AppState::InGame)
+                    },
                     MenuButton::Quit => exit.send(AppExit),
                 }
                 continue;

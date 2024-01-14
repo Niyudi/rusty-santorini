@@ -6,16 +6,22 @@ use std::{
     fmt::Display, 
     ops::{Index, IndexMut},
 };
-use crate::AppState;
+
+use crate::{
+    AppState,
+    controller::{Controller, ControllersPlugin},
+};
 
 pub struct BoardPlugin;
 impl Plugin for BoardPlugin {
     fn build(&self, app: &mut App) {
         app
+            .add_plugins(ControllersPlugin)
             .add_event::<Build>()
             .add_event::<Movement>()
             .add_event::<NextTurn>()
             .add_event::<PlaceWorker>()
+            .init_resource::<Turn>()
             .add_systems(OnEnter(AppState::InGame), spawn_board)
             .add_systems(
                 Update, (
@@ -119,7 +125,13 @@ impl IndexMut<BoardPosition> for BoardOccupation {
 }
 
 #[derive(Resource)]
-enum Turn {
+pub struct Controllers {
+    pub p1: Controller,
+    pub p2: Controller,
+}
+
+#[derive(Resource)]
+pub enum Turn {
     P1,
     P2,
 }
@@ -135,6 +147,11 @@ impl Turn {
             Turn::P1 => Turn::P2,
             Turn::P2 => Turn::P1,
         }
+    }
+}
+impl FromWorld for Turn {
+    fn from_world(_world: &mut World) -> Self {
+        Turn::P1
     }
 }
 
@@ -155,7 +172,7 @@ impl Default for BoardCamera {
 struct BaseMarker;
 
 #[derive(Component)]
-struct BoardMarker;
+pub struct BoardMarker;
 
 #[derive(Clone, Component, Copy, PartialEq)]
 struct BoardPosition {
@@ -182,7 +199,7 @@ impl Display for BoardPosition {
 struct TurnIndicatorMarker;
 
 #[derive(Component, PartialEq)]
-enum WorkerMarker {
+pub enum WorkerMarker {
     P1,
     P2,
 }
@@ -465,7 +482,6 @@ fn spawn_board(
     // Inserts resources
     commands.insert_resource(board_assets);
     commands.insert_resource(BoardOccupation::default());
-    commands.insert_resource(Turn::P1);
 }
 
 fn update_camera(
