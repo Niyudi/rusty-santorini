@@ -9,7 +9,6 @@ edition = "2021"
 bevy_mod_picking = { version = "0.17.0", default-features = false, features = [
   "backend_raycast",
   "highlight",
-  "selection",
 ]}
 itertools = "0.12.0"
 
