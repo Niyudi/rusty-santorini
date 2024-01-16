@@ -12,6 +12,8 @@ impl Plugin for ControllersPlugin {
     }
 }
 
+// Structs
+
 #[derive(PartialEq)]
 pub enum Controller {
     Human,

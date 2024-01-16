@@ -32,11 +32,13 @@ fn main() {
         .run();
 }
 
+// States
+
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq, States)]
 pub enum AppState {
-    InGame,
     #[default]
     Menu,
+    InGame,
 }
 
 // Setup

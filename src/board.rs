@@ -16,7 +16,6 @@ pub struct BoardPlugin;
 impl Plugin for BoardPlugin {
     fn build(&self, app: &mut App) {
         app
-            .add_plugins(ControllersPlugin)
             .add_event::<Build>()
             .add_event::<Movement>()
             .add_event::<NextTurn>()
@@ -29,13 +28,30 @@ impl Plugin for BoardPlugin {
                         camera_input,
                         update_camera,
                     ).chain(),
-                    build,
-                    movement,
-                    next_turn,
-                    place_worker,
+                    (
+                        (
+                            build,
+                            movement,
+                            place_worker,
+                            next_turn,
+                        ),
+                        apply_deferred,
+                        unlock,
+                    ).chain()
                 ).run_if(in_state(AppState::InGame)))
-            .add_systems(OnExit(AppState::InGame), despawn_board);
+            .add_systems(OnExit(AppState::InGame), despawn_board)
+            .add_plugins(ControllersPlugin);
     }
+}
+
+// Structs
+
+#[derive(Clone, Copy, Default, PartialEq)]
+pub enum Occupation {
+    Block,
+    #[default]
+    Empty,
+    Worker,
 }
 
 // Resources
@@ -107,12 +123,38 @@ impl BoardAssets {
     }
 }
 
-#[derive(Default, Resource)]
-struct BoardOccupation {
-    data: [[[bool ; 5] ; 5] ; 5],
+#[derive(Resource)]
+pub struct BoardOccupation {
+    data: [[[Occupation ; 5] ; 5] ; 5],
+}
+impl BoardOccupation {
+    pub fn top(&self, row: usize, column: usize) -> Option<usize> {
+        let mut height = 1;
+        loop {
+            if height == 5 {
+                return None
+            }
+            match self.data[row][column][height] {
+                Occupation::Block => height += 1,
+                Occupation::Empty => return Some(height),
+                Occupation::Worker => return None,
+            }
+        }
+    }
+}
+impl Default for BoardOccupation {
+    fn default() -> Self {
+        let mut data: [[[Occupation ; 5] ; 5] ; 5] = Default::default();
+
+        for (i, j) in (0..5).cartesian_product(0..5) {
+            data[i][j][0] = Occupation::Block;
+        }
+
+        Self { data }
+    }
 }
 impl Index<BoardPosition> for BoardOccupation {
-    type Output = bool;
+    type Output = Occupation;
 
     fn index(&self, index: BoardPosition) -> &Self::Output {
         &self.data[index.row][index.column][index.height]
@@ -130,13 +172,28 @@ pub struct Controllers {
     pub p2: Controller,
 }
 
-#[derive(Resource)]
+#[derive(Default, Resource)]
+pub struct Lock(bool);
+impl Lock {
+    pub fn is_locked(&self) -> bool {
+        self.0
+    }
+    pub fn lock(&mut self) {
+        self.0 = true;
+    }
+    
+    fn unlock(&mut self) {
+        self.0 = false;
+    }
+}
+
+#[derive(PartialEq, Resource)]
 pub enum Turn {
     P1,
     P2,
 }
 impl Turn {
-    fn get_worker_marker(&self) -> WorkerMarker {
+    pub fn get_worker_marker(&self) -> WorkerMarker {
         match self {
             Turn::P1 => WorkerMarker::P1,
             Turn::P2 => WorkerMarker::P2,
@@ -174,19 +231,57 @@ struct BaseMarker;
 #[derive(Component)]
 pub struct BoardMarker;
 
-#[derive(Clone, Component, Copy, PartialEq)]
-struct BoardPosition {
+#[derive(Clone, Component, Copy, Eq, Hash, PartialEq)]
+pub struct BoardPosition {
     pub row: usize,
     pub column: usize,
     pub height: usize,
 }
 impl BoardPosition {
-    fn new(row: usize, column: usize, height: usize) -> Self {
-        BoardPosition {
+    pub fn new(row: usize, column: usize, height: usize) -> Self {
+        Self {
             row,
             column,
             height,
         }
+    }
+
+    pub fn above(&self) -> Self {
+        Self {
+            row: self.row,
+            column: self.column,
+            height: self.height + 1,
+        }
+    }
+    pub fn neighbours(&self) -> Vec<(usize, usize)> {
+        let mut neighbours = Vec::new();
+
+        if self.row > 0 && self.column > 0 {
+            neighbours.push((self.row - 1, self.column - 1));
+        }
+        if self.column > 0 {
+            neighbours.push((self.row, self.column - 1));
+        }
+        if self.row < 4 && self.column > 0 {
+            neighbours.push((self.row + 1, self.column - 1));
+        }
+        if self.row > 0 {
+            neighbours.push((self.row - 1, self.column));
+        }
+        if self.row < 4 {
+            neighbours.push((self.row + 1, self.column));
+        }
+        if self.row > 0 && self.column < 4 {
+            neighbours.push((self.row - 1, self.column + 1));
+        }
+        if self.column < 4 {
+            neighbours.push((self.row, self.column + 1));
+        }
+        if self.row < 4 && self.column < 4 {
+            neighbours.push((self.row + 1, self.column + 1));
+        }
+
+        neighbours
     }
 }
 impl Display for BoardPosition {
@@ -215,7 +310,7 @@ fn build (
     for Build { position } in ev_build.read() {
         let (transform, mesh, material) = board_assets.get_block(position);
 
-        board_occupation[*position] = true;
+        board_occupation[*position] = Occupation::Block;
 
         commands.spawn((
             PbrBundle {
@@ -285,27 +380,26 @@ fn despawn_board(
 fn movement(
     mut board_occupation: ResMut<BoardOccupation>,
     mut ev_movement: EventReader<Movement>,
-    mut worker_query: Query<(&BoardPosition, &mut Transform), With<WorkerMarker>>,
+    mut worker_query: Query<(&mut BoardPosition, &mut Transform), With<WorkerMarker>>,
     board_assets: Res<BoardAssets>,
 ) {
-    for Movement { from, to } in ev_movement.read() {
-        if board_occupation[*to] {
+    'events: for Movement { from, to } in ev_movement.read() {
+        if board_occupation[*to] != Occupation::Empty {
             panic!("Move event failed: {} is already occupied!", to);
         }
 
-        let mut transform = 'transform: {
-            for (position, transform) in worker_query.iter_mut() {
-                if position == from {
-                    break 'transform transform;
-                }
+        for (mut position, mut transform) in worker_query.iter_mut() {
+            if *position == *from {
+                board_occupation[*from] = Occupation::Empty;
+                board_occupation[*to] = Occupation::Worker;
+
+                transform.translation = board_assets.get_worker_translation(to);
+                *position = *to;
+
+                continue 'events;
             }
-            panic!("Move event failed: there's no worker in {}!", from);
-        };
-
-        board_occupation[*from] = false;
-        board_occupation[*to] = true;
-
-        transform.translation = board_assets.get_worker_translation(from);
+        }
+        panic!("Move event failed: there's no worker in {}!", from);
     }
 }
 
@@ -323,16 +417,17 @@ fn next_turn(
 }
 
 fn place_worker(
+    mut board_occupation: ResMut<BoardOccupation>,
     mut commands: Commands,
     mut ev_place_worker: EventReader<PlaceWorker>,
     board_assets: Res<BoardAssets>,
-    board_occupation: Res<BoardOccupation>,
     turn: Res<Turn>,
 ) {
     for PlaceWorker { position } in ev_place_worker.read() {
-        if board_occupation[*position] {
+        if board_occupation[*position] != Occupation::Empty {
             panic!("Place worker event failed: {} is already occupied!", position);
         }
+        board_occupation[*position] = Occupation::Worker;
 
         let (transform, mesh, material) = board_assets.get_worker(position, &turn);
 
@@ -482,6 +577,13 @@ fn spawn_board(
     // Inserts resources
     commands.insert_resource(board_assets);
     commands.insert_resource(BoardOccupation::default());
+    commands.insert_resource(Lock::default());
+}
+
+fn unlock(
+    mut lock: ResMut<Lock>,
+) {
+    lock.unlock();
 }
 
 fn update_camera(
@@ -507,15 +609,15 @@ struct Build {
 }
 
 #[derive(Event)]
-struct Movement {
-    from: BoardPosition,
-    to: BoardPosition,
+pub struct Movement {
+    pub from: BoardPosition,
+    pub to: BoardPosition,
 }
 
 #[derive(Event)]
-struct NextTurn;
+pub struct NextTurn;
 
 #[derive(Event)]
-struct PlaceWorker {
-    position: BoardPosition,
+pub struct PlaceWorker {
+    pub position: BoardPosition,
 }
