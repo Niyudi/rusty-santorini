@@ -28,7 +28,7 @@ fn main() {
         .add_plugins(DefaultPickingPlugins)
         .add_state::<AppState>()
         .add_systems(PostStartup, picking_setup)
-        .add_plugins((board::BoardPlugin, menu::MenuPlugin))
+        .add_plugins((board::BoardPlugin, controller::ControllersPlugin, menu::MenuPlugin))
         .run();
 }
 
@@ -38,6 +38,7 @@ fn main() {
 pub enum AppState {
     #[default]
     Menu,
+    LoadGame,
     InGame,
 }
 

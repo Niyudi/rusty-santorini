@@ -4,8 +4,7 @@ use bevy::app::AppExit;
 
 use crate::{
     AppState,
-    board::Controllers,
-    controller::Controller,
+    controller::{Controllers, Controller}
 };
 
 pub struct MenuPlugin;
@@ -56,8 +55,8 @@ fn buttons_system(
                             p1: Controller::Human,
                             p2: Controller::Human,
                         });
-                        next_state.set(AppState::InGame)
-                    },
+                        next_state.set(AppState::InGame);
+                    }
                     MenuButton::Quit => exit.send(AppExit),
                 }
                 continue;
