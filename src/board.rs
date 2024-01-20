@@ -1,42 +1,156 @@
 use bevy::prelude::*;
-use bevy_mod_picking::prelude::*;
 
-use bevy::input::mouse::MouseMotion;
+use bevy::{
+    input::mouse::MouseMotion,
+    utils::hashbrown::HashSet,
+};
 use itertools::Itertools;
+
 use crate::AppState;
 
 pub struct BoardPlugin;
 impl Plugin for BoardPlugin {
     fn build(&self, app: &mut App) {
         app
-            .add_event::<Build>()
-            .add_event::<Hold>()
-            .add_event::<Movement>()
-            .add_event::<NextTurn>()
-            .add_event::<PlaceWorker>()
-            .add_event::<Release>()
-            .add_systems(OnEnter(AppState::InGame), spawn_board)
-            .add_systems(
-                Update, (
-                    (
-                        camera_input,
-                        update_camera,
-                    ).chain(),
-                    send_events_debug,
-                    (
-                        build,
-                        hold,
-                        movement,
-                        next_turn,
-                        place_worker,
-                        release,
-                    ).after(send_events_debug),
-                ).run_if(in_state(AppState::InGame)))
-            .add_systems(OnExit(AppState::InGame), despawn_board);
+            .add_systems(OnEnter(AppState::InGame),
+                setup
+            )
+            .add_systems(PreUpdate,
+                camera_input.run_if(in_state(AppState::InGame))
+            )
+            .add_systems(Update,
+                (
+                    update_camera,
+                    update_board,
+                ).run_if(in_state(AppState::InGame))
+            )
+            .add_systems(OnExit(AppState::InGame),
+                cleanup
+            );
     }
 }
 
+// Structs
+
+#[derive(Clone, Copy, Eq, Hash, PartialEq, Debug)]
+pub enum Piece {
+    Block,
+    Board,
+    Worker {
+        player: Player
+    },
+}
+
+#[derive(Clone, Copy, Default, Eq, Hash, PartialEq, Debug)]
+pub enum Player {
+    #[default]
+    P1,
+    P2,
+}
+
 // Resources
+
+#[derive(Resource)]
+pub struct Board {
+    data: [[[Option<Piece> ; 5] ; 5] ; 5],
+    turn: Player,
+}
+impl Board {
+    pub fn build(&mut self, row: usize, column: usize, height: usize) {
+        if self.data[row][column][height].is_some() {
+            panic!("Can't build on ({}, {}, {}) because it's already occupied!", row, column, height);
+        }
+
+        self.data[row][column][height] = Some(Piece::Block);
+    }
+    pub fn get_piece(&self, row: usize, column: usize, height: usize) -> Option<&Piece> {
+        self.data[row][column][height].as_ref()
+    }
+    pub fn get_pieces(&self) -> HashSet<PieceMarker> {
+        let mut pieces = HashSet::new();
+        for ((row, column), height) in (0..5).cartesian_product(0..5).cartesian_product(1..5) {
+            if let Some(piece) = self.data[row][column][height] {
+                pieces.insert(PieceMarker {
+                    piece,
+                    row,
+                    column,
+                    height,
+                });
+            }
+        }
+        pieces
+    }
+    pub fn get_top(&self, row: usize, column: usize) -> Option<usize> {        
+        for height in 1..5 {
+            match self.data[row][column][height] {
+                Some(Piece::Block) => continue,
+                None => return Some(height - 1),
+                _ => return None,
+            }
+        }
+        None
+    }
+    pub fn get_turn(&self) -> &Player {
+        &self.turn
+    }
+    pub fn movement(&mut self,
+        from_row: usize, from_column: usize, from_height: usize,
+        to_row: usize, to_column: usize, to_height: usize,
+    ) {
+        if let Some(Piece::Worker { player: _ }) = self.data[from_row][from_column][from_height] {
+            if self.data[to_row][to_column][to_height].is_some() {
+                panic!("Can't move to ({}, {}, {}) because it's already occupied!", to_row, to_column, to_height);
+            }
+
+            self.data[to_row][to_column][to_height] = self.data[from_row][from_column][from_height];
+            self.data[from_row][from_column][from_height] = None;
+        } else {
+            panic!("Can't move from ({}, {}, {}) because there's no worker there!", from_row, from_column, from_height);
+        }
+    }
+    pub fn next_turn(&mut self) {
+        self.turn = match self.turn {
+            Player::P1 => Player::P2,
+            Player::P2 => Player::P1,
+        };
+    }
+    pub fn place_worker(&mut self, row: usize, column: usize, height: usize, player: Player) {
+        if self.data[row][column][height].is_some() {
+            panic!("Can't place worker on ({}, {}, {}) because it's already occupied!", row, column, height);
+        }
+
+        self.data[row][column][height] = Some(Piece::Worker { player });
+    }
+    pub fn validate_world_pieces<'a, I>(&self, piece_markers: I) -> bool
+        where I: Iterator<Item = &'a PieceMarker>
+    {
+        let mut pieces = [[[None ; 5] ; 5] ; 5];
+        for PieceMarker { piece, row, column, height } in piece_markers {
+            pieces[*row][*column][*height] = Some(*piece);
+        }
+
+        for ((row, column), height) in (0..5).cartesian_product(0..5).cartesian_product(0..5) {
+            if self.data[row][column][height] != pieces[row][column][height] {
+                return false;
+            }
+        }
+
+        true
+    }
+}
+impl Default for Board {
+    fn default() -> Self {
+        let mut data: [[[Option<Piece>; 5]; 5]; 5] = Default::default();
+        for (row, column) in (0..5).cartesian_product(0..5) {
+            data[row][column][0] = Some(Piece::Board);
+        }
+
+        Self {
+            data,
+            turn: Player::default(),
+        }
+    }
+}
 
 #[derive(Resource)]
 struct BoardAssets {
@@ -49,69 +163,75 @@ struct BoardAssets {
     level3_mesh: Handle<Mesh>,
     level4_height: f32,
     level4_mesh: Handle<Mesh>,
+    player1_material: Handle<StandardMaterial>,
+    player2_material: Handle<StandardMaterial>,
     white_material: Handle<StandardMaterial>,
-    worker1_material: Handle<StandardMaterial>,
-    worker2_material: Handle<StandardMaterial>,
     worker_height_offset: f32,
     worker_mesh: Handle<Mesh>,
 }
 impl BoardAssets {
-    fn get_block_at_height(&self, height: usize) -> (f32, Handle<Mesh>, Handle<StandardMaterial>) {
-        match height {
-            1 => (self.level1_height, self.level1_mesh.clone(), self.white_material.clone()),
-            2 => (self.level2_height, self.level2_mesh.clone(), self.white_material.clone()),
-            3 => (self.level3_height, self.level3_mesh.clone(), self.white_material.clone()),
-            4 => (self.level4_height, self.level4_mesh.clone(), self.blue_material.clone()),
-            _ => unreachable!(),
-        }
-    }
-    fn get_turn_material(&self, turn: &Turn) -> Handle<StandardMaterial> {
-        match turn {
-            Turn::P1 => self.worker1_material.clone(),
-            Turn::P2 => self.worker2_material.clone(),
-        }
-    }
-    fn get_worker_at_height_and_turn(&self, height: usize, turn: &Turn) -> (f32, Handle<Mesh>, Handle<StandardMaterial>) {
-        let material = self.get_turn_material(turn);
+    fn get_piece(&self, piece_marker: &PieceMarker) -> (Transform, Handle<Mesh>, Handle<StandardMaterial>) {
+        let PieceMarker {
+            piece,
+            row,
+            column,
+            height,
+        } = *piece_marker;
 
-        (
-            self.get_worker_height(height),
-            self.worker_mesh.clone(),
-            material,
-        )
-    }
-    fn get_worker_height(&self, height: usize) -> f32 {
-        self.worker_height_offset + match height {
-            1 => self.level1_height,
-            2 => self.level2_height,
-            3 => self.level3_height,
-            4 => self.level4_height,
-            _ => unreachable!(),
+        match piece {
+            Piece::Block => match height {
+                1 => (
+                    Transform::from_xyz(row as f32 - 2.0, self.level1_height, column as f32 - 2.0),
+                    self.level1_mesh.clone(),
+                    self.white_material.clone(),
+                ),
+                2 => (
+                    Transform::from_xyz(row as f32 - 2.0, self.level2_height, column as f32 - 2.0),
+                    self.level2_mesh.clone(),
+                    self.white_material.clone(),
+                ),
+                3 => (
+                    Transform::from_xyz(row as f32 - 2.0, self.level3_height, column as f32 - 2.0),
+                    self.level3_mesh.clone(),
+                    self.white_material.clone(),
+                ),
+                4 => (
+                    Transform::from_xyz(row as f32 - 2.0, self.level4_height, column as f32 - 2.0),
+                    self.level4_mesh.clone(),
+                    self.blue_material.clone(),
+                ),
+                _ => panic!("{} is an invalid height!", height),
+            },
+            Piece::Board => panic!("Can't spawn more board pieces!"),
+            Piece::Worker { player } => (
+                Transform::from_xyz(
+                    row as f32 - 2.0,
+                    match height {
+                        1 => self.worker_height_offset + self.level1_height,
+                        2 => self.worker_height_offset + self.level2_height,
+                        3 => self.worker_height_offset + self.level3_height,
+                        4 => self.worker_height_offset + self.level4_height,
+                        _ => panic!("{} is an invalid height!", height),
+                    },
+                    column as f32 - 2.0,
+                ),
+                self.worker_mesh.clone(),
+                self.get_player_material(player),
+            ),
         }
     }
-}
-
-#[derive(  Resource)]
-enum Turn {
-    P1,
-    P2,
-}
-impl Turn {
-    fn get_worker_marker(&self) -> WorkerMarker {
-        match self {
-            Turn::P1 => WorkerMarker::P1,
-            Turn::P2 => WorkerMarker::P2,
-        }
-    }
-    fn next(&mut self) {
-        *self = match self {
-            Turn::P1 => Turn::P2,
-            Turn::P2 => Turn::P1,
+    fn get_player_material(&self, player: Player) -> Handle<StandardMaterial> {
+        match player {
+            Player::P1 => self.player1_material.clone(),
+            Player::P2 => self.player2_material.clone(),
         }
     }
 }
 
 // Components
+
+#[derive(Component)]
+struct BaseMarker;
 
 #[derive(Component)]
 struct BoardCamera {
@@ -124,73 +244,20 @@ impl Default for BoardCamera {
     }
 }
 
-#[derive(Component)]
-struct BaseMarker;
-
-#[derive(Component)]
-struct BoardMarker;
-
-#[derive(Component, PartialEq)]
-struct BoardPosition(usize, usize, usize);
-impl BoardPosition {
-    fn above(&self) -> BoardPosition {
-        BoardPosition(self.0, self.1, self.2 + 1)
-    }
+#[derive(Clone, Component, Copy, Eq, Hash, PartialEq)]
+pub struct PieceMarker {
+    pub piece: Piece,
+    pub row: usize,
+    pub column: usize,
+    pub height: usize,
 }
 
-#[derive(Component)]
-struct Held;
-
-#[derive(Component)]
-struct TurnIndicatorMarker;
-
-#[derive(Component, PartialEq)]
-enum WorkerMarker {
-    P1,
-    P2,
+#[derive(Component, Default)]
+struct TurnIndicatorMarker {
+    turn: Player,
 }
 
 // Systems
-
-fn build (
-    mut commands: Commands,
-    mut ev_build: EventReader<Build>,
-    mut selected_query: Query<(&BoardPosition, &mut Pickable, &mut PickSelection), With<BoardMarker>>,
-    board_assets: Res<BoardAssets>,
-) {
-    'events: for _ in ev_build.read() {
-        let position = 'pos: {
-            for (position, mut pickable, mut selection) in selected_query.iter_mut() {
-                if selection.is_selected {
-                    *pickable = Pickable::IGNORE;
-                    selection.is_selected = false;
-                    break 'pos position.above();
-                }
-            }
-            break 'events;
-        };
-
-        let (height, mesh, material) = board_assets.get_block_at_height(position.2);
-
-        commands.spawn((
-            PbrBundle {
-                mesh,
-                material,
-                transform: Transform::from_xyz(position.0 as f32 - 2.0, height, position.1 as f32 - 2.0),
-                ..default()
-            },
-            PickableBundle {
-                pickable: if position.2 == 4 { Pickable::IGNORE } else { Pickable::default() },
-                ..default()
-            },
-            position,
-            BoardMarker,
-        ));
-
-        break;
-    }
-    ev_build.clear();
-}
 
 fn camera_input(
     mut camera_query: Query<&mut BoardCamera>,
@@ -198,6 +265,7 @@ fn camera_input(
     mouse: Res<Input<MouseButton>>,
     window_query: Query<&Window>,
 ) {
+    const MAX_PITCH: f32 = std::f32::consts::FRAC_PI_2 - 0.001;
     const SENSITIVITY: Vec2 = Vec2::new(60.0, 30.0);
 
     if !mouse.pressed(MouseButton::Right) {
@@ -212,7 +280,7 @@ fn camera_input(
     }
 
     let mut camera = camera_query.single_mut();
-    camera.pitch = (camera.pitch + rotation.y).clamp(0.0, std::f32::consts::FRAC_PI_2);
+    camera.pitch = (camera.pitch + rotation.y).clamp(0.0, MAX_PITCH);
     camera.yaw = camera.yaw + rotation.x;
     while camera.yaw < 0.0 {
         camera.yaw += std::f32::consts::TAU;
@@ -222,199 +290,20 @@ fn camera_input(
     }
 }
 
-fn despawn_board(
+fn cleanup(
     mut commands: Commands,
-    base_query: Query<Entity, With<BaseMarker>>,
-    board_query: Query<Entity, With<BoardMarker>>,
-    workers_query: Query<Entity, With<WorkerMarker>>,
+    query: Query<Entity, Or<(With<BaseMarker>, With<PieceMarker>)>>,
 ) {
-    for entity in base_query.iter() {
-        commands.entity(entity).despawn_recursive();
+    for entity in query.iter() {
+        commands.entity(entity).despawn();
     }
-    for entity in board_query.iter() {
-        commands.entity(entity).despawn_recursive();
-    }
-    for entity in workers_query.iter() {
-        commands.entity(entity).despawn_recursive();
-    }
-    
+
     commands.remove_resource::<AmbientLight>();
+    commands.remove_resource::<Board>();
     commands.remove_resource::<BoardAssets>();
-    commands.remove_resource::<Turn>();
 }
 
-fn hold(
-    mut commands: Commands,
-    mut ev_hold: EventReader<Hold>,
-    mut selected_query: Query<(Entity, &WorkerMarker, &mut Transform, &mut Pickable, &mut PickSelection), Without<Held>>,
-    held_query: Query<(), With<Held>>,
-    turn: Res<Turn>,
-) {
-    'events: for  _ in ev_hold.read() {
-        if !held_query.is_empty() {
-            break;
-        }
-
-        let (entity, mut transform) = 'transform: {
-            for (entity, worker_marker, transform, mut pickable, mut selection) in selected_query.iter_mut() {
-                if selection.is_selected && turn.get_worker_marker() == *worker_marker {
-                    *pickable = Pickable::IGNORE;
-                    selection.is_selected = false;
-                    break 'transform (entity, transform);
-                }
-            }
-            break 'events;
-        };
-
-        commands.entity(entity).insert(Held);
-        transform.translation.y += 0.75;
-
-        break;
-    }
-    ev_hold.clear();
-}
-
-fn movement(
-    mut commands: Commands,
-    mut ev_movement: EventReader<Movement>,
-    mut held_query: Query<(Entity, &mut Transform, &mut BoardPosition, &mut Pickable), (Without<BoardMarker>, With<Held>)>,
-    mut selected_query: Query<(&BoardPosition, &mut Pickable, &mut PickSelection), (With<BoardMarker>, Without<Held>)>,
-    board_assets: Res<BoardAssets>,
-) {
-    'events: for _ in ev_movement.read() {
-        if let Ok((entity, mut transform, mut worker_position, mut pickable)) = held_query.get_single_mut() {
-            *worker_position = 'pos: {
-                let mut origin_board = None;
-                let mut new_worker = None;
-                for (position, pickable, selection) in selected_query.iter_mut() {
-                    if position.above() == *worker_position {
-                        origin_board = Some(pickable);
-                    } else if selection.is_selected {
-                        new_worker = Some((position, pickable, selection));
-                    }
-
-                    if origin_board.is_some() && new_worker.is_some() {
-                        *origin_board.unwrap() = Pickable::default();
-                        let (new_position, mut new_pickable, mut new_selection) = new_worker.unwrap();
-                        *new_pickable = Pickable::IGNORE;
-                        new_selection.is_selected = false;
-                        break 'pos new_position.above();
-                    }
-                }
-                break 'events;
-            };
-            
-            commands.entity(entity).remove::<Held>();
-            transform.translation = Vec3::new(worker_position.0 as f32 - 2.0, board_assets.get_worker_height(worker_position.2), worker_position.1 as f32 - 2.0);
-            *pickable = Pickable::default();
-        }
-        break;
-    }
-    ev_movement.clear();
-}
-
-fn next_turn(
-    mut commands: Commands,
-    mut ev_next_turn: EventReader<NextTurn>,
-    mut turn: ResMut<Turn>,
-    board_assets: Res<BoardAssets>,
-    held_query: Query<(), With<Held>>,
-    turn_indicator_query: Query<Entity, With<TurnIndicatorMarker>>,
-) {
-    for _ in ev_next_turn.read() {
-        if !held_query.is_empty() {
-            break;
-        }
-
-        turn.next();
-
-        let turn_indicator_entity = turn_indicator_query.single();
-        commands.entity(turn_indicator_entity).insert(board_assets.get_turn_material(&turn));
-
-        break;
-    }
-    ev_next_turn.clear();
-}
-
-fn place_worker(
-    mut commands: Commands,
-    mut ev_place_worker: EventReader<PlaceWorker>,
-    mut selected_query: Query<(&BoardPosition, &mut Pickable, &mut PickSelection), With<BoardMarker>>,
-    board_assets: Res<BoardAssets>,
-    turn: Res<Turn>,
-) {
-    'events: for _ in ev_place_worker.read() {
-        let position = 'pos: {
-            for (position, mut pickable, mut selection) in selected_query.iter_mut() {
-                if selection.is_selected {
-                    *pickable = Pickable::IGNORE;
-                    selection.is_selected = false;
-                    break 'pos position.above();
-                }
-            }
-            break 'events;
-        };
-        let worker_marker = turn.get_worker_marker();
-        let (height, mesh, material) = board_assets.get_worker_at_height_and_turn(position.2, &turn);
-
-        commands.spawn((
-            PbrBundle {
-                mesh,
-                material,
-                transform: Transform::from_xyz(position.0 as f32 - 2.0, height, position.1 as f32 - 2.0),
-                ..default()
-            },
-            PickableBundle::default(),
-            position,
-            worker_marker,
-        ));
-
-        break;
-    }
-    ev_place_worker.clear();
-}
-
-fn release(
-    mut commands: Commands,
-    mut ev_release: EventReader<Release>,
-    mut held_query: Query<(Entity, &mut Transform, &mut Pickable), With<Held>>,
-) {
-    for _ in ev_release.read() {
-        if let Ok((entity, mut transform, mut pickable)) = held_query.get_single_mut() {
-            commands.entity(entity).remove::<Held>();
-            transform.translation.y -= 0.75;
-            *pickable = Pickable::default();
-        }
-        break;
-    }
-    ev_release.clear();
-}
-
-fn send_events_debug(
-    mut ev_build: EventWriter<Build>,
-    mut ev_hold: EventWriter<Hold>,
-    mut ev_movement: EventWriter<Movement>,
-    mut ev_next_turn: EventWriter<NextTurn>,
-    mut ev_place_worker: EventWriter<PlaceWorker>,
-    mut ev_release: EventWriter<Release>,
-    keys: Res<Input<KeyCode>>,
-) {
-    if keys.just_pressed(KeyCode::S) {
-        ev_place_worker.send(PlaceWorker);
-    } else if keys.just_pressed(KeyCode::B) {
-        ev_build.send(Build);
-    } else if keys.just_pressed(KeyCode::N) {
-        ev_next_turn.send(NextTurn);
-    } else if keys.just_pressed(KeyCode::H) {
-        ev_hold.send(Hold);
-    } else if keys.just_pressed(KeyCode::M) {
-        ev_movement.send(Movement);
-    } else if keys.just_pressed(KeyCode::R) {
-        ev_release.send(Release);
-    }
-}
-
-fn spawn_board(
+fn setup(
     mut commands: Commands,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -459,14 +348,14 @@ fn spawn_board(
             max_z: 0.4,
         }.into()),
         white_material: materials.add(Color::rgb_u8(250, 254, 255).into()),
-        worker1_material: materials.add(StandardMaterial {
+        player1_material: materials.add(StandardMaterial {
             base_color: Color::GOLD,
             metallic: 1.0,
             reflectance: 0.8,
             perceptual_roughness: 0.4,
             ..default()
         }),
-        worker2_material: materials.add(StandardMaterial {
+        player2_material: materials.add(StandardMaterial {
             base_color: Color::SILVER,
             metallic: 1.0,
             reflectance: 0.8,
@@ -487,7 +376,7 @@ fn spawn_board(
     // Lights
     commands.insert_resource(AmbientLight {
         color: Color::rgb(1.0, 0.8, 0.7),
-        brightness: 0.4,
+        brightness: 0.6,
     });
     commands.spawn((
         PointLightBundle {
@@ -517,10 +406,10 @@ fn spawn_board(
         PbrBundle {
             mesh: meshes.add(shape::Box::from_corners(
                 Vec3::new(-2.9, -0.21, -2.9), Vec3::new(2.9, -0.49, 2.9)).into()),
-            material: board_assets.worker1_material.clone(),
+            material: board_assets.player1_material.clone(),
             ..default()
         },
-        TurnIndicatorMarker,
+        TurnIndicatorMarker::default(),
         BaseMarker,
     ));
 
@@ -539,15 +428,55 @@ fn spawn_board(
                 transform: Transform::from_xyz(i as f32, -0.05, j as f32),
                 ..default()
             },
-            PickableBundle::default(),
-            BoardPosition((i + 2) as usize, (j + 2) as usize, 0),
-            BoardMarker,
+            PieceMarker {
+                piece: Piece::Board,
+                row: (i + 2) as usize,
+                column: (j + 2) as usize,
+                height: 0,
+            },
         ));
     }
 
     // Inserts resources
+    commands.insert_resource(Board::default());
     commands.insert_resource(board_assets);
-    commands.insert_resource(Turn::P1);
+}
+
+fn update_board(
+    mut commands: Commands,
+    mut turn_indicator_query: Query<(Entity, &mut TurnIndicatorMarker)>,
+    board: Res<Board>,
+    board_assets: Res<BoardAssets>,
+    pieces_query: Query<(Entity, &PieceMarker)>,
+) {
+    let mut board_pieces = board.get_pieces();
+
+    for (entity, piece_marker) in pieces_query.iter() {
+        if !board_pieces.remove(piece_marker) {
+            if piece_marker.height > 0 {
+                commands.entity(entity).despawn();
+            }
+        }
+    }
+
+    for piece_marker in board_pieces.into_iter() {
+        let (transform, mesh, material) = board_assets.get_piece(&piece_marker);
+        commands.spawn((
+            PbrBundle {
+                transform,
+                mesh,
+                material,
+                ..default()
+            },
+            piece_marker,
+        ));
+    }
+
+    let (entity, mut turn_indicator_marker) = turn_indicator_query.single_mut();
+    if turn_indicator_marker.turn != board.turn {
+        turn_indicator_marker.turn = board.turn;
+        commands.entity(entity).insert(board_assets.get_player_material(board.turn));
+    }
 }
 
 fn update_camera(
@@ -558,29 +487,10 @@ fn update_camera(
     let (mut tranform, camera) = camera_query.single_mut();
 
     let (pitch_sin, pitch_cos) = camera.pitch.sin_cos();
+    let (yaw_sin, yaw_cos) = camera.yaw.sin_cos();
     *tranform = Transform::from_xyz(
-            DISTANCE * camera.yaw.cos() * pitch_cos,
-            DISTANCE * pitch_sin,
-            DISTANCE * camera.yaw.sin() * pitch_cos,
-        ).looking_at(Vec3::ZERO, Vec3::Y);
+        DISTANCE * yaw_cos * pitch_cos,
+        DISTANCE * pitch_sin,
+        DISTANCE * yaw_sin * pitch_cos,
+    ).looking_at(Vec3::ZERO, Vec3::Y);
 }
-
-// Events
-
-#[derive(Event)]
-struct Build;
-
-#[derive(Event)]
-struct Hold;
-
-#[derive(Event)]
-struct Movement;
-
-#[derive(Event)]
-struct NextTurn;
-
-#[derive(Event)]
-struct PlaceWorker;
-
-#[derive(Event)]
-struct Release;
