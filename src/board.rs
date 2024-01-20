@@ -292,7 +292,7 @@ fn camera_input(
 
 fn cleanup(
     mut commands: Commands,
-    query: Query<Entity, Or<(With<BaseMarker>, With<PieceMarker>)>>,
+    query: Query<Entity, Or<(With<BoardCamera>, With<BaseMarker>, With<PieceMarker>)>>,
 ) {
     for entity in query.iter() {
         commands.entity(entity).despawn();

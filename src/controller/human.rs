@@ -5,8 +5,12 @@ use bevy::utils::hashbrown::HashMap;
 use itertools::Itertools;
 use std::ops::Deref;
 
-use super::{Controller, Controllers, ControllersState};
-use crate::{AppState, board::{Board, Piece, PieceMarker, Player}};
+use super::{Controller, Controllers};
+use crate::{
+    AppState,
+    board::{Board, Piece, PieceMarker, Player},
+    menus::Paused,
+};
 
 pub struct HumanControllerPlugin;
 impl Plugin for HumanControllerPlugin {
@@ -22,10 +26,12 @@ impl Plugin for HumanControllerPlugin {
                     apply_deferred,
                     handle_input,
                 ).chain()
-            ).run_if(in_state(ControllersState::Running).and_then(is_controller_used)))
+            ).run_if(in_state(AppState::InGame).and_then(is_controller_used)))
             .add_systems(Update, (
+                pause_pickable,
                 run_controllers,
-            ).run_if(in_state(ControllersState::Running).and_then(is_controller_used)));
+            ).run_if(in_state(AppState::InGame).and_then(is_controller_used)))
+            .add_systems(OnExit(AppState::InGame), cleanup);
     }
 }
 
@@ -62,7 +68,21 @@ struct HumanController {
     state: HumanControllerState,
 }
 
+#[derive(Component)]
+struct PauseBlockerMarker;
+
 // Systems
+
+fn cleanup(
+    mut commands: Commands,
+    query: Query<Entity, Or<(With<HumanController>, With<PauseBlockerMarker>)>>,
+) {
+    for entity in query.iter() {
+        commands.entity(entity).despawn();
+    }
+
+    commands.remove_resource::<Controllers>();
+}
 
 fn guarantee_pickable(
     mut commands: Commands,
@@ -103,6 +123,31 @@ fn handle_input(
                 column: *column,
                 height: *height,
             });
+        }
+    }
+}
+
+fn pause_pickable(
+    mut commands: Commands,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    pause_blocker_query: Query<Entity, With<PauseBlockerMarker>>,
+    paused: Res<Paused>,
+) {
+    if paused.value {
+        if pause_blocker_query.get_single().is_err() {
+            commands.spawn((
+                PbrBundle {
+                    mesh: meshes.add(shape::UVSphere { radius: 9.9, ..default() }.into()),
+                    material: materials.add(Color::rgba(0.0, 0.0, 0.0, 0.0).into()),
+                    ..default()
+                },
+                PauseBlockerMarker,
+            ));
+        }
+    } else {
+        if let Ok(entity) = pause_blocker_query.get_single() {
+            commands.entity(entity).despawn();
         }
     }
 }
