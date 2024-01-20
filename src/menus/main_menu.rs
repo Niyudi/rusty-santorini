@@ -7,13 +7,13 @@ use crate::{
     controller::{Controllers, Controller}
 };
 
-pub struct MenuPlugin;
-impl Plugin for MenuPlugin {
+pub struct MainMenuPlugin;
+impl Plugin for MainMenuPlugin {
     fn build(&self, app: &mut App) {
         app
-            .add_systems(OnEnter(AppState::Menu), spawn_menu)
+            .add_systems(OnEnter(AppState::Menu), setup)
             .add_systems(Update, buttons_system.run_if(in_state(AppState::Menu)))
-            .add_systems(OnExit(AppState::Menu), despawn_menu);
+            .add_systems(OnExit(AppState::Menu), cleanup);
     }
 }
 
@@ -25,13 +25,14 @@ const NORMAL_BUTTON_COLOR: Color = Color::rgb(0.05, 0.05, 0.25);
 // Components
 
 #[derive(Component)]
-pub struct MenuCamera;
-
-#[derive(Component)]
-enum MenuButton {
+enum MainMenuButton {
     Play,
     Quit,
 }
+
+#[derive(Component)]
+struct MainMenuCamera;
+
 #[derive(Component)]
 struct MainMenuMarker;
 
@@ -41,7 +42,7 @@ fn buttons_system(
     mut commands: Commands,
     mut exit: EventWriter<AppExit>,
     mut interaction_query: Query<
-        (&Interaction, &MenuButton, &mut BackgroundColor),
+        (&Interaction, &MainMenuButton, &mut BackgroundColor),
         (Changed<Interaction>, With<Button>),
     >,
     mut next_state: ResMut<NextState<AppState>>,
@@ -50,14 +51,14 @@ fn buttons_system(
         *color = match *interaction {
             Interaction::Pressed => {
                 match *button {
-                    MenuButton::Play => {
+                    MainMenuButton::Play => {
                         commands.insert_resource(Controllers {
                             p1: Controller::Human,
                             p2: Controller::Human,
                         });
                         next_state.set(AppState::InGame);
                     }
-                    MenuButton::Quit => exit.send(AppExit),
+                    MainMenuButton::Quit => exit.send(AppExit),
                 }
                 continue;
             }
@@ -67,7 +68,7 @@ fn buttons_system(
     }
 }
 
-fn despawn_menu(
+fn cleanup(
     mut commands: Commands,
     menu_query: Query<Entity, With<MainMenuMarker>>,
 ) {
@@ -76,10 +77,10 @@ fn despawn_menu(
     }
 }
 
-fn spawn_menu(
+fn setup(
     mut commands: Commands,
 ) {
-    commands.spawn((MenuCamera, MainMenuMarker, Camera2dBundle::default()));
+    commands.spawn((MainMenuCamera, MainMenuMarker, Camera2dBundle::default()));
 
     const BASE_COLOR: Color = Color::rgb(0.97, 0.97, 1.00);
 
@@ -147,8 +148,7 @@ fn spawn_menu(
                                 background_color: NORMAL_BUTTON_COLOR.into(),
                                 ..default()
                             },
-                            MenuButton::Play
-                    ,
+                            MainMenuButton::Play,
                         ))
                         .with_children(|parent| {
                             parent.spawn(TextBundle::from_section(
@@ -163,7 +163,7 @@ fn spawn_menu(
                                 background_color: NORMAL_BUTTON_COLOR.into(),
                                 ..default()
                             },
-                            MenuButton::Quit,
+                            MainMenuButton::Quit,
                         ))
                         .with_children(|parent| {
                             parent.spawn(TextBundle::from_section(

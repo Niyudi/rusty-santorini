@@ -1,6 +1,6 @@
 mod board;
 mod controller;
-mod menu;
+mod menus;
 
 use bevy::prelude::*;
 use bevy_mod_picking::prelude::*;
@@ -26,7 +26,11 @@ fn main() {
         .add_plugins(DefaultPickingPlugins)
         .add_state::<AppState>()
         .add_systems(PostStartup, picking_setup)
-        .add_plugins((board::BoardPlugin, controller::ControllersPlugin, menu::MenuPlugin))
+        .add_plugins((
+            board::BoardPlugin,
+            controller::ControllersPlugin,
+            menus::MenusPlugin,
+        ))
         .run();
 }
 
