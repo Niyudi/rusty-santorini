@@ -15,8 +15,6 @@ fn main() {
                 WindowPlugin {
                     primary_window: Some(Window {
                         present_mode: PresentMode::AutoVsync,
-                        prevent_default_event_handling: true,
-                        resizable: false,
                         resolution: (1270., 720.).into(),
                         title: "Santorini".to_string(),
                         ..default()
@@ -38,7 +36,6 @@ fn main() {
 pub enum AppState {
     #[default]
     Menu,
-    LoadGame,
     InGame,
 }
 

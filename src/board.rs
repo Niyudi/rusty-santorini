@@ -32,15 +32,16 @@ impl Plugin for BoardPlugin {
 
 // Structs
 
-#[derive(Clone, Copy, Eq, Hash, PartialEq)]
-enum Piece {
+#[derive(Clone, Copy, Eq, Hash, PartialEq, Debug)]
+pub enum Piece {
     Block,
+    Board,
     Worker {
         player: Player
     },
 }
 
-#[derive(Clone, Copy, Default, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Default, Eq, Hash, PartialEq, Debug)]
 pub enum Player {
     #[default]
     P1,
@@ -49,9 +50,9 @@ pub enum Player {
 
 // Resources
 
-#[derive(Default, Resource)]
+#[derive(Resource)]
 pub struct Board {
-    data: [[[Option<Piece> ; 4] ; 4] ; 4],
+    data: [[[Option<Piece> ; 5] ; 5] ; 5],
     turn: Player,
 }
 impl Board {
@@ -61,6 +62,36 @@ impl Board {
         }
 
         self.data[row][column][height] = Some(Piece::Block);
+    }
+    pub fn get_piece(&self, row: usize, column: usize, height: usize) -> Option<&Piece> {
+        self.data[row][column][height].as_ref()
+    }
+    pub fn get_pieces(&self) -> HashSet<PieceMarker> {
+        let mut pieces = HashSet::new();
+        for ((row, column), height) in (0..5).cartesian_product(0..5).cartesian_product(1..5) {
+            if let Some(piece) = self.data[row][column][height] {
+                pieces.insert(PieceMarker {
+                    piece,
+                    row,
+                    column,
+                    height,
+                });
+            }
+        }
+        pieces
+    }
+    pub fn get_top(&self, row: usize, column: usize) -> Option<usize> {        
+        for height in 1..5 {
+            match self.data[row][column][height] {
+                Some(Piece::Block) => continue,
+                None => return Some(height - 1),
+                _ => return None,
+            }
+        }
+        None
+    }
+    pub fn get_turn(&self) -> &Player {
+        &self.turn
     }
     pub fn movement(&mut self,
         from_row: usize, from_column: usize, from_height: usize,
@@ -90,34 +121,48 @@ impl Board {
 
         self.data[row][column][height] = Some(Piece::Worker { player });
     }
+    pub fn validate_world_pieces<'a, I>(&self, piece_markers: I) -> bool
+        where I: Iterator<Item = &'a PieceMarker>
+    {
+        let mut pieces = [[[None ; 5] ; 5] ; 5];
+        for PieceMarker { piece, row, column, height } in piece_markers {
+            pieces[*row][*column][*height] = Some(*piece);
+        }
 
-    fn get_pieces(&self) -> HashSet<PieceMarker> {
-        let mut pieces = HashSet::new();
-        for ((row, column), height) in (0..4).cartesian_product(0..4).cartesian_product(0..4) {
-            if let Some(piece) = self.data[row][column][height] {
-                pieces.insert(PieceMarker {
-                    piece,
-                    row,
-                    column,
-                    height,
-                });
+        for ((row, column), height) in (0..5).cartesian_product(0..5).cartesian_product(0..5) {
+            if self.data[row][column][height] != pieces[row][column][height] {
+                return false;
             }
         }
-        pieces
+
+        true
+    }
+}
+impl Default for Board {
+    fn default() -> Self {
+        let mut data: [[[Option<Piece>; 5]; 5]; 5] = Default::default();
+        for (row, column) in (0..5).cartesian_product(0..5) {
+            data[row][column][0] = Some(Piece::Board);
+        }
+
+        Self {
+            data,
+            turn: Player::default(),
+        }
     }
 }
 
 #[derive(Resource)]
 struct BoardAssets {
     blue_material: Handle<StandardMaterial>,
-    level0_height: f32,
-    level0_mesh: Handle<Mesh>,
     level1_height: f32,
     level1_mesh: Handle<Mesh>,
     level2_height: f32,
     level2_mesh: Handle<Mesh>,
     level3_height: f32,
     level3_mesh: Handle<Mesh>,
+    level4_height: f32,
+    level4_mesh: Handle<Mesh>,
     player1_material: Handle<StandardMaterial>,
     player2_material: Handle<StandardMaterial>,
     white_material: Handle<StandardMaterial>,
@@ -135,11 +180,6 @@ impl BoardAssets {
 
         match piece {
             Piece::Block => match height {
-                0 => (
-                    Transform::from_xyz(row as f32 - 2.0, self.level0_height, column as f32 - 2.0),
-                    self.level0_mesh.clone(),
-                    self.white_material.clone(),
-                ),
                 1 => (
                     Transform::from_xyz(row as f32 - 2.0, self.level1_height, column as f32 - 2.0),
                     self.level1_mesh.clone(),
@@ -153,18 +193,24 @@ impl BoardAssets {
                 3 => (
                     Transform::from_xyz(row as f32 - 2.0, self.level3_height, column as f32 - 2.0),
                     self.level3_mesh.clone(),
+                    self.white_material.clone(),
+                ),
+                4 => (
+                    Transform::from_xyz(row as f32 - 2.0, self.level4_height, column as f32 - 2.0),
+                    self.level4_mesh.clone(),
                     self.blue_material.clone(),
                 ),
                 _ => panic!("{} is an invalid height!", height),
             },
+            Piece::Board => panic!("Can't spawn more board pieces!"),
             Piece::Worker { player } => (
                 Transform::from_xyz(
                     row as f32 - 2.0,
                     match height {
-                        0 => self.worker_height_offset + self.level0_height,
                         1 => self.worker_height_offset + self.level1_height,
                         2 => self.worker_height_offset + self.level2_height,
                         3 => self.worker_height_offset + self.level3_height,
+                        4 => self.worker_height_offset + self.level4_height,
                         _ => panic!("{} is an invalid height!", height),
                     },
                     column as f32 - 2.0,
@@ -198,15 +244,12 @@ impl Default for BoardCamera {
     }
 }
 
-#[derive(Component)]
-pub struct BoardMarker;
-
-#[derive(Component, Eq, Hash, PartialEq)]
+#[derive(Clone, Component, Copy, Eq, Hash, PartialEq)]
 pub struct PieceMarker {
-    piece: Piece,
-    row: usize,
-    column: usize,
-    height: usize,
+    pub piece: Piece,
+    pub row: usize,
+    pub column: usize,
+    pub height: usize,
 }
 
 #[derive(Component, Default)]
@@ -249,7 +292,7 @@ fn camera_input(
 
 fn cleanup(
     mut commands: Commands,
-    query: Query<Entity, Or<(With<BaseMarker>, With<BoardMarker>, With<PieceMarker>)>>,
+    query: Query<Entity, Or<(With<BaseMarker>, With<PieceMarker>)>>,
 ) {
     for entity in query.iter() {
         commands.entity(entity).despawn();
@@ -268,8 +311,8 @@ fn setup(
     // Recurring assets
     let board_assets = BoardAssets {
         blue_material: materials.add(Color::BLUE.into()),
-        level0_height: 0.0,
-        level0_mesh: meshes.add(shape::Box {
+        level1_height: 0.0,
+        level1_mesh: meshes.add(shape::Box {
             min_x: -0.475,
             max_x: 0.475,
             min_y: 0.0,
@@ -277,8 +320,8 @@ fn setup(
             min_z: -0.475,
             max_z: 0.475,
         }.into()),
-        level1_height: 1.0,
-        level1_mesh: meshes.add(shape::Box {
+        level2_height: 1.0,
+        level2_mesh: meshes.add(shape::Box {
             min_x: -0.425,
             max_x: 0.425,
             min_y: 0.0,
@@ -286,8 +329,8 @@ fn setup(
             min_z: -0.425,
             max_z: 0.425,
         }.into()),
-        level2_height: 1.8,
-        level2_mesh: meshes.add(shape::Box {
+        level3_height: 1.8,
+        level3_mesh: meshes.add(shape::Box {
             min_x: -0.4,
             max_x: 0.4,
             min_y: 0.0,
@@ -295,8 +338,8 @@ fn setup(
             min_z: -0.4,
             max_z: 0.4,
         }.into()),
-        level3_height: 2.4,
-        level3_mesh: meshes.add(shape::Box {
+        level4_height: 2.4,
+        level4_mesh: meshes.add(shape::Box {
             min_x: -0.4,
             max_x: 0.4,
             min_y: 0.0,
@@ -333,7 +376,7 @@ fn setup(
     // Lights
     commands.insert_resource(AmbientLight {
         color: Color::rgb(1.0, 0.8, 0.7),
-        brightness: 0.4,
+        brightness: 0.6,
     });
     commands.spawn((
         PointLightBundle {
@@ -385,7 +428,12 @@ fn setup(
                 transform: Transform::from_xyz(i as f32, -0.05, j as f32),
                 ..default()
             },
-            BoardMarker,
+            PieceMarker {
+                piece: Piece::Board,
+                row: (i + 2) as usize,
+                column: (j + 2) as usize,
+                height: 0,
+            },
         ));
     }
 
@@ -405,7 +453,9 @@ fn update_board(
 
     for (entity, piece_marker) in pieces_query.iter() {
         if !board_pieces.remove(piece_marker) {
-            commands.entity(entity).despawn();
+            if piece_marker.height > 0 {
+                commands.entity(entity).despawn();
+            }
         }
     }
 

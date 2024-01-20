@@ -10,11 +10,21 @@ pub struct ControllersPlugin;
 impl Plugin for ControllersPlugin {
     fn build(&self, app: &mut App) {
         app
+            .add_state::<ControllersState>()
             .add_plugins(HumanControllerPlugin)
             .add_systems(Update,
-                wait_resources.run_if(in_state(AppState::LoadGame))
+                start_controllers.run_if(in_state(AppState::InGame).and_then(run_once()))
             );
     }
+}
+
+// States
+
+#[derive(Clone, Debug, Default, Eq, Hash, PartialEq, States)]
+enum ControllersState {
+    #[default]
+    Idle,
+    Running,
 }
 
 // Structs
@@ -34,11 +44,8 @@ pub struct Controllers {
 
 // Systems
 
-fn wait_resources(
-    mut next_state: ResMut<NextState<AppState>>,
-    world: &World,
+fn start_controllers(
+    mut next_state: ResMut<NextState<ControllersState>>,
 ) {
-    if world.get_resource::<Controllers>().is_some() {
-        next_state.set(AppState::InGame);
-    }
+    next_state.set(ControllersState::Running);
 }
