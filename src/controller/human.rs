@@ -8,7 +8,7 @@ use std::ops::Deref;
 use super::{Controller, Controllers};
 use crate::{
     AppState,
-    board::{Board, Piece, PieceMarker, Player},
+    board::{Board, Piece, PieceMarker, Turn},
     menus::Paused,
 };
 
@@ -64,7 +64,7 @@ enum HumanControllerState {
 
 #[derive(Component)]
 struct HumanController {
-    turn: Player,
+    turn: Turn,
     state: HumanControllerState,
 }
 
@@ -288,8 +288,8 @@ fn run_controllers(
             HumanControllerState::PrepMovement => {
                 let mut workers = Vec::new();
                 for PieceMarker { piece, row, column, height } in board.get_pieces() {
-                    if let Piece::Worker { player } = piece {
-                        if player == *board.get_turn() {
+                    if let Piece::Worker { turn } = piece {
+                        if turn == *board.get_turn() {
                             workers.push((row, column, height));
                         }
                     }
@@ -327,7 +327,7 @@ fn run_controllers(
                     }
 
                     match board.get_piece(*row, *column, *height) {
-                        Some(Piece::Worker { player: _ }) => {
+                        Some(Piece::Worker { turn: _ }) => {
                             let (mut pickable, mut transform) = world_pieces.remove(&(selected_row, selected_column, selected_height)).unwrap();
                             *pickable = Pickable::default();
                             transform.translation.y -= RAISE;
@@ -392,13 +392,13 @@ fn spawn_controllers(
 ) {
     if controllers.p1 == Controller::Human {
         commands.spawn(HumanController {
-            turn: Player::P1,
+            turn: Turn::P1,
             state: HumanControllerState::PrepPlaceWorker,
         });
     }
     if controllers.p2 == Controller::Human {
         commands.spawn(HumanController {
-            turn: Player::P2,
+            turn: Turn::P2,
             state: HumanControllerState::PrepPlaceWorker,
         });
     }
