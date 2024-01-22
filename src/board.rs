@@ -20,6 +20,7 @@ impl Plugin for BoardPlugin {
             )
             .add_systems(Update,
                 (
+                    check_win,
                     update_camera,
                     update_board,
                 ).run_if(in_state(AppState::InGame))
@@ -32,20 +33,22 @@ impl Plugin for BoardPlugin {
 
 // Structs
 
-#[derive(Clone, Copy, Eq, Hash, PartialEq, Debug)]
+#[derive(Clone, Copy, Eq, Hash, PartialEq)]
 pub enum Piece {
     Block,
     Board,
     Worker {
-        player: Player
+        turn: Turn
     },
 }
 
-#[derive(Clone, Copy, Default, Eq, Hash, PartialEq, Debug)]
-pub enum Player {
+#[derive(Clone, Copy, Default, Eq, Hash, PartialEq)]
+pub enum Turn {
     #[default]
     P1,
     P2,
+    WinP1,
+    WinP2,
 }
 
 // Resources
@@ -53,7 +56,7 @@ pub enum Player {
 #[derive(Resource)]
 pub struct Board {
     data: [[[Option<Piece> ; 5] ; 5] ; 5],
-    turn: Player,
+    turn: Turn,
 }
 impl Board {
     pub fn build(&mut self, row: usize, column: usize, height: usize) {
@@ -90,14 +93,14 @@ impl Board {
         }
         None
     }
-    pub fn get_turn(&self) -> &Player {
+    pub fn get_turn(&self) -> &Turn {
         &self.turn
     }
     pub fn movement(&mut self,
         from_row: usize, from_column: usize, from_height: usize,
         to_row: usize, to_column: usize, to_height: usize,
     ) {
-        if let Some(Piece::Worker { player: _ }) = self.data[from_row][from_column][from_height] {
+        if let Some(Piece::Worker { turn: _ }) = self.data[from_row][from_column][from_height] {
             if self.data[to_row][to_column][to_height].is_some() {
                 panic!("Can't move to ({}, {}, {}) because it's already occupied!", to_row, to_column, to_height);
             }
@@ -110,16 +113,17 @@ impl Board {
     }
     pub fn next_turn(&mut self) {
         self.turn = match self.turn {
-            Player::P1 => Player::P2,
-            Player::P2 => Player::P1,
+            Turn::P1 => Turn::P2,
+            Turn::P2 => Turn::P1,
+            _ => self.turn,
         };
     }
-    pub fn place_worker(&mut self, row: usize, column: usize, height: usize, player: Player) {
+    pub fn place_worker(&mut self, row: usize, column: usize, height: usize, turn: Turn) {
         if self.data[row][column][height].is_some() {
             panic!("Can't place worker on ({}, {}, {}) because it's already occupied!", row, column, height);
         }
 
-        self.data[row][column][height] = Some(Piece::Worker { player });
+        self.data[row][column][height] = Some(Piece::Worker { turn });
     }
     pub fn validate_world_pieces<'a, I>(&self, piece_markers: I) -> bool
         where I: Iterator<Item = &'a PieceMarker>
@@ -147,7 +151,7 @@ impl Default for Board {
 
         Self {
             data,
-            turn: Player::default(),
+            turn: Turn::default(),
         }
     }
 }
@@ -203,7 +207,7 @@ impl BoardAssets {
                 _ => panic!("{} is an invalid height!", height),
             },
             Piece::Board => panic!("Can't spawn more board pieces!"),
-            Piece::Worker { player } => (
+            Piece::Worker { turn } => (
                 Transform::from_xyz(
                     row as f32 - 2.0,
                     match height {
@@ -216,14 +220,14 @@ impl BoardAssets {
                     column as f32 - 2.0,
                 ),
                 self.worker_mesh.clone(),
-                self.get_player_material(player),
+                self.get_turn_material(turn),
             ),
         }
     }
-    fn get_player_material(&self, player: Player) -> Handle<StandardMaterial> {
-        match player {
-            Player::P1 => self.player1_material.clone(),
-            Player::P2 => self.player2_material.clone(),
+    fn get_turn_material(&self, turn: Turn) -> Handle<StandardMaterial> {
+        match turn {
+            Turn::P1 | Turn::WinP1 => self.player1_material.clone(),
+            Turn::P2 | Turn::WinP2 => self.player2_material.clone(),
         }
     }
 }
@@ -254,8 +258,11 @@ pub struct PieceMarker {
 
 #[derive(Component, Default)]
 struct TurnIndicatorMarker {
-    turn: Player,
+    turn: Turn,
 }
+
+#[derive(Component)]
+struct WinText;
 
 // Systems
 
@@ -290,9 +297,103 @@ fn camera_input(
     }
 }
 
+fn check_win(
+    mut board: ResMut<Board>,
+) {
+    const IS_NEIGHBOUR_REACHABLE: fn(usize, usize, usize, &mut ResMut<Board>) -> bool =
+    |row, column, height, board| {
+        if row > 0 && column > 0 {
+            if IS_REACHABLE(row - 1, column - 1, height, board) {
+                return true;
+            }
+        }
+        if row > 0 {
+            if IS_REACHABLE(row - 1, column, height, board) {
+                return true;
+            }
+        }
+        if row > 0 && column < 4 {
+            if IS_REACHABLE(row - 1, column + 1, height, board) {
+                return true;
+            }
+        }
+        if column > 0 {
+            if IS_REACHABLE(row, column - 1, height, board) {
+                return true;
+            }
+        }
+        if column < 4 {
+            if IS_REACHABLE(row, column + 1, height, board) {
+                return true;
+            }
+        }
+        if row < 4 && column > 0 {
+            if IS_REACHABLE(row + 1, column - 1, height, board) {
+                return true;
+            }
+        }
+        if row < 4 {
+            if IS_REACHABLE(row + 1, column, height, board) {
+                return true;
+            }
+        }
+        if row < 4 && column < 4 {
+            if IS_REACHABLE(row + 1, column + 1, height, board) {
+                return true;
+            }
+        }
+        false
+    };
+    const IS_REACHABLE: fn(usize, usize, usize, &mut ResMut<Board>) -> bool =
+    |row, column, height, board| {
+        if let Some(top_height) = board.get_top(row, column) {
+            top_height <= height
+        } else {
+            false
+        }
+    };
+
+    let mut p1_exists = false;
+    let mut p1_smothered = true;
+    let mut p2_exists = false;
+    let mut p2_smothered = true;
+    for PieceMarker { piece, row, column, height } in board.get_pieces() {
+        if let Piece::Worker { turn } = piece {
+            match turn {
+                Turn::P1 => {
+                    if height == 4 {
+                        board.turn = Turn::WinP1;
+                        return;
+                    }
+                    p1_exists = true;
+                    if IS_NEIGHBOUR_REACHABLE(row, column, height, &mut board) {
+                        p1_smothered = false;
+                    }
+                }
+                Turn::P2 => {
+                    if height == 4 {
+                        board.turn = Turn::WinP2;
+                        return;
+                    }
+                    p2_exists = true;
+                    if IS_NEIGHBOUR_REACHABLE(row, column, height, &mut board) {
+                        p2_smothered = false;
+                    }
+                }
+                _ => unreachable!(),
+            }
+        }
+    }
+    if p1_exists && p1_smothered {
+        board.turn = Turn::WinP2;
+    } else if p2_exists && p2_smothered {
+        board.turn = Turn::WinP1;
+    }
+}
+
 fn cleanup(
     mut commands: Commands,
-    query: Query<Entity, Or<(With<BoardCamera>, With<BaseMarker>, With<PieceMarker>)>>,
+    query: Query<Entity, Or<(With<BoardCamera>, With<BaseMarker>, With<PieceMarker>, With<WinText>)>>,
 ) {
     for entity in query.iter() {
         commands.entity(entity).despawn();
@@ -448,7 +549,51 @@ fn update_board(
     board: Res<Board>,
     board_assets: Res<BoardAssets>,
     pieces_query: Query<(Entity, &PieceMarker)>,
+    win_text_query: Query<(), With<WinText>>,   
+    
 ) {
+    match board.get_turn() {
+        Turn::WinP1 => if win_text_query.is_empty() {
+            commands.spawn((
+                TextBundle {
+                    text: Text::from_section("Gold wins!", TextStyle {
+                        color: Color::GREEN,
+                        font_size: 24.0,
+                        ..default()
+                    }),
+                    style: Style {
+                        position_type: PositionType::Absolute,
+                        right: Val::Px(5.0),
+                        top: Val::Px(5.0),
+                        ..default()
+                    },
+                    ..default()
+                },
+                WinText,
+            ));
+        },
+        Turn::WinP2 => if win_text_query.is_empty() {
+            commands.spawn((
+                TextBundle {
+                    text: Text::from_section("Silver wins!", TextStyle {
+                        color: Color::GREEN,
+                        font_size: 24.0,
+                        ..default()
+                    }),
+                    style: Style {
+                        position_type: PositionType::Absolute,
+                        right: Val::Px(5.0),
+                        top: Val::Px(5.0),
+                        ..default()
+                    },
+                    ..default()
+                },
+                WinText,
+            ));
+        },
+        _ => {}
+    }
+
     let mut board_pieces = board.get_pieces();
 
     for (entity, piece_marker) in pieces_query.iter() {
@@ -475,7 +620,7 @@ fn update_board(
     let (entity, mut turn_indicator_marker) = turn_indicator_query.single_mut();
     if turn_indicator_marker.turn != board.turn {
         turn_indicator_marker.turn = board.turn;
-        commands.entity(entity).insert(board_assets.get_player_material(board.turn));
+        commands.entity(entity).insert(board_assets.get_turn_material(board.turn));
     }
 }
 
