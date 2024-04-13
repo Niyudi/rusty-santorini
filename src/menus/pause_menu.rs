@@ -1,6 +1,9 @@
 use bevy::prelude::*;
 
-use crate::AppState;
+use crate::{
+    AppState,
+    controller::{Controller, Controllers},
+};
 
 pub struct PauseMenuPlugin;
 impl Plugin for PauseMenuPlugin {
@@ -11,7 +14,8 @@ impl Plugin for PauseMenuPlugin {
                 pause_button,
                 pause_menu,
             ).run_if(in_state(AppState::InGame)))
-            .add_systems(OnExit(AppState::InGame), cleanup);
+            .add_systems(OnExit(AppState::InGame), cleanup)
+            .add_systems(Update, reset.run_if(in_state(AppState::Reset)));
     }
 }
 
@@ -36,6 +40,7 @@ struct PauseButtonMarker;
 #[derive(Component)]
 enum PauseMenuButton {
     Resume,
+    Reset,
     MainMenu,
 }
 
@@ -122,6 +127,20 @@ fn pause_button(
                                 background_color: NORMAL_BUTTON_COLOR.into(),
                                 ..default()
                             },
+                            PauseMenuButton::Reset,
+                        )).with_children(|parent| {
+                            parent.spawn(TextBundle::from_section(
+                                "Reset",
+                                button_text_style.clone(),
+                            ));
+                        });
+
+                        parent.spawn((
+                            ButtonBundle {
+                                style: button_style.clone(),
+                                background_color: NORMAL_BUTTON_COLOR.into(),
+                                ..default()
+                            },
                             PauseMenuButton::MainMenu,
                         )).with_children(|parent| {
                             parent.spawn(TextBundle::from_section(
@@ -150,13 +169,23 @@ fn pause_menu(
                 commands.entity(pause_menu_query.single()).despawn_recursive();
                 spawn_pause_button(&mut commands, Res::clone(&asset_server));
             }
-            (Interaction::Pressed, PauseMenuButton::MainMenu) => {
-                next_state.set(AppState::Menu);
-            }
+            (Interaction::Pressed, PauseMenuButton::Reset) => next_state.set(AppState::Reset),
+            (Interaction::Pressed, PauseMenuButton::MainMenu) => next_state.set(AppState::Menu),
             (Interaction::Hovered, _) => *color = HOVERED_BUTTON_COLOR.into(),
             (Interaction::None, _) => *color = NORMAL_BUTTON_COLOR.into(),
         }
     }
+}
+
+fn reset(
+    mut commands: Commands,
+    mut next_state: ResMut<NextState<AppState>>,
+) {
+    commands.insert_resource(Controllers {
+        p1: Controller::Human,
+        p2: Controller::Human,
+    });
+    next_state.set(AppState::InGame);
 }
 
 fn setup(

@@ -41,6 +41,7 @@ pub enum AppState {
     #[default]
     Menu,
     InGame,
+    Reset,
 }
 
 // Setup
